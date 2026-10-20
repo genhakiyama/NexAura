@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function formatTime(ts) {
   if (!ts) return '';
@@ -7,12 +7,34 @@ function formatTime(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function ImageLightbox({ src, alt, onClose }) {
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div className="lightbox-backdrop" onClick={onClose}>
+      <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+        <img src={src} alt={alt} />
+        <button className="lightbox-close" onClick={onClose} title="Đóng" aria-label="Đóng">✕</button>
+      </div>
+    </div>
+  );
+}
+
 export default function MessageList({ messages, currentUserId, currentUsername }) {
   const bottomRef = useRef(null);
+  const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const openLightbox = useCallback((src) => setLightbox(src), []);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
 
   if (messages.length === 0) {
     return (
@@ -36,10 +58,25 @@ export default function MessageList({ messages, currentUserId, currentUsername }
           (m.senderId != null && m.senderId === currentUserId) ||
           // Live socket messages only carry a username, so fall back to it.
           (!m.senderId && !!m.senderName && m.senderName === currentUsername);
+
+        const isImage = m.type === 'image';
+
         return (
           <div key={m.id} className={mine ? 'msg mine' : 'msg'}>
             {!mine && <div className="msg-sender">{m.senderName}</div>}
-            <div className="msg-bubble">{m.content}</div>
+            <div className="msg-bubble">
+              {isImage ? (
+                <img
+                  className="msg-image"
+                  src={m.content}
+                  alt="Ảnh"
+                  loading="lazy"
+                  onClick={() => openLightbox(m.content)}
+                />
+              ) : (
+                m.content
+              )}
+            </div>
             <div className="msg-foot">
               <span className="msg-time">{formatTime(m.createdAt)}</span>
               {mine && (
@@ -56,6 +93,10 @@ export default function MessageList({ messages, currentUserId, currentUsername }
         );
       })}
       <div ref={bottomRef} />
+
+      {lightbox && (
+        <ImageLightbox src={lightbox} alt="Ảnh phóng to" onClose={closeLightbox} />
+      )}
     </div>
   );
 }

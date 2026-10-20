@@ -757,13 +757,17 @@ select {
 /* ============================================================
    Composer — terminal prompt
    ============================================================ */
+.composer-wrapper {
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
 .composer {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
   background: var(--bg-panel);
-  border-top: 1px solid var(--border);
+  border-top: none;
 }
 .composer::before {
   content: '\276f';
@@ -773,7 +777,134 @@ select {
   font-size: 15px;
   font-weight: 700;
 }
-.composer input { flex: 1; border-radius: var(--radius-pill); padding: 9px 14px; }
+.composer input[type="text"] { flex: 1; border-radius: var(--radius-pill); padding: 9px 14px; }
+
+/* attach image button */
+.composer-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.composer-attach:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+.composer-attach:disabled {
+  color: var(--fg-faint);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ============================================================
+   Image preview strip (above composer)
+   ============================================================ */
+.image-preview {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 14px 0;
+  animation: preview-in 0.15s ease-out;
+}
+@keyframes preview-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.image-preview img {
+  max-width: 200px;
+  max-height: 140px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+}
+.image-preview-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ============================================================
+   Image inside message bubble
+   ============================================================ */
+.msg-image {
+  display: block;
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+.msg-image:hover {
+  filter: brightness(1.05);
+  transform: scale(1.02);
+}
+/* Remove text padding from image bubbles */
+.msg-bubble:has(.msg-image) {
+  padding: 4px;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+/* ============================================================
+   Lightbox — fullscreen image viewer
+   ============================================================ */
+.lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.85);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  animation: scrim-in 0.16s ease-out;
+  cursor: zoom-out;
+}
+.lightbox-content {
+  position: relative;
+  max-width: 92vw;
+  max-height: 90vh;
+  cursor: default;
+}
+.lightbox-content img {
+  display: block;
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  object-fit: contain;
+  animation: palette-in 0.18s ease-out;
+}
+.lightbox-close {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 14px;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease;
+}
+.lightbox-close:hover {
+  background: var(--bg-hover);
+}
 
 /* ============================================================
    Chat info — slide-out, scrollable drawer (Messenger style)

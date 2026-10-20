@@ -8,6 +8,7 @@ const messageErr = require('../Errors/Message');
 const chatErr = require('../Errors/Chat');
 
 const room = require('../Socket/RoomManager');
+const { uploadImage } = require('./Upload');
 
 async function isMember(userId , conversationId){
     // A missing or non-numeric id used to become NaN, which Sequelize sent to
@@ -66,12 +67,12 @@ async function sendMessage(senderId , username , type , conversationId , content
         }
     }
 
-    // Message.content is VARCHAR(255); without this check Postgres throws
-    // "value too long" and the browser only sees a generic 500.
-    if (text.length > 255) {
+    // Message.content is now TEXT (no Postgres length limit), but we still
+    // cap user-typed text to keep the UI tidy.
+    if (text.length > 2000) {
         return {
             status_code : 400,
-            error : 'Tin nhắn tối đa 255 ký tự.'
+            error : 'Tin nhắn tối đa 2000 ký tự.'
         }
     }
 
@@ -90,6 +91,7 @@ async function sendMessage(senderId , username , type , conversationId , content
         id : message.id,
         from : username , 
         message : text ,
+        type ,
         chatId : id,
         createdAt: message.createdAt
     });
@@ -97,6 +99,55 @@ async function sendMessage(senderId , username , type , conversationId , content
     return {
         message : 'Tin nhắn đã gửi',
         messageId : message.id
+    };
+}
+
+async function sendImageMessage(senderId , username , conversationId , file) {
+    if (!file || !file.buffer) {
+        return {
+            status_code : messageErr.InvalidAttachmentError.defaultStatusCode ,
+            error : messageErr.InvalidAttachmentError.defaultMessage
+        };
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+        return {
+            status_code : messageErr.AttachmentTooLargeError.defaultStatusCode ,
+            error : messageErr.AttachmentTooLargeError.defaultMessage
+        };
+    }
+
+    const member = await isMember(senderId , conversationId);
+    if (member.error) return member;
+
+    const id = Number(conversationId);
+
+    // Upload to Supabase Storage and get the public URL
+    const imageUrl = await uploadImage(
+        file.buffer , file.originalname , file.mimetype , id
+    );
+
+    const message = await Message.create({
+        type : 'image' ,
+        status : 'sent' ,
+        content : imageUrl ,
+        userId : senderId ,
+        conversationId : id
+    });
+
+    room.sendToRoom(id , {
+        id : message.id ,
+        from : username ,
+        message : imageUrl ,
+        type : 'image' ,
+        chatId : id ,
+        createdAt : message.createdAt
+    });
+
+    return {
+        message : 'Ảnh đã gửi' ,
+        messageId : message.id ,
+        imageUrl
     };
 }
 
@@ -142,6 +193,7 @@ async function deleteMessage(senderId , username , conversationId , messageId) {
 
 module.exports = {
     sendMessage , 
+    sendImageMessage ,
     deleteMessage ,
     getMessages
 }

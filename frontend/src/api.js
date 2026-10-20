@@ -116,6 +116,43 @@ async function request(method, path, body, { auth = true } = {}) {
   return data?.payload ?? data;
 }
 
+// Multipart variant — used for file uploads (FormData). The browser sets the
+// Content-Type header with the correct boundary automatically; we must NOT
+// override it.
+async function requestMultipart(path, formData) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+  } catch {
+    throw new ApiError('Không kết nối được tới backend khi tải ảnh lên.', 0);
+  }
+
+  let data = null;
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    try { data = await res.json(); } catch { /* ignore */ }
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      clearToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
+    const msg = data && (data.payload?.error || data.error);
+    throw new ApiError(msg || `Upload thất bại (${res.status})`, res.status);
+  }
+
+  return data?.payload ?? data;
+}
+
 export const api = {
   // ---- Auth (HTTP) ----
   signup: ({ email, username, password }) =>
@@ -144,4 +181,12 @@ export const api = {
   },
   messages: (conversationId) =>
     request('GET', `/chat/conversation/${conversationId}/messages`),
+
+  // ---- Image upload (multipart/form-data) ----
+  uploadImage: ({ conversationId, file }) => {
+    const fd = new FormData();
+    fd.append('conversationId', conversationId);
+    fd.append('image', file);
+    return requestMultipart('/chat/message/upload', fd);
+  },
 };

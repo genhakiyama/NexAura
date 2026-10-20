@@ -17,7 +17,7 @@ module.exports = sequelize.define('Message' , {
         defaultValue: 'delivered'
     } , 
     content : {
-        type : DataTypes.STRING , 
+        type : DataTypes.TEXT , 
         allowNull : false
     }
 } , {

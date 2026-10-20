@@ -111,7 +111,7 @@ export function upsertIncoming(list, data, currentUsername) {
   } else {
     next = appendMessage(list, {
       id: nextTempId(),
-      type: 'text',
+      type: data.type || 'text',
       content,
       senderName,
       senderId: mine ? data.userId ?? null : null,

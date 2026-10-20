@@ -28,6 +28,39 @@ async function sendMessage(req , res) {
     });
 }
 
+async function uploadImage(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const conversationId = req.body.conversationId;
+
+    if (!conversationId) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'conversationId is required.' }
+        });
+    }
+
+    const result = await MessageService.sendImageMessage(
+        userId , username , conversationId , req.file
+    );
+
+    if (result.error) {
+        return res.status(result.status_code).json({
+            success : false ,
+            payload : { error : result.error }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : {
+            message : result.message ,
+            messageId : result.messageId ,
+            imageUrl : result.imageUrl
+        }
+    });
+}
+
 async function deleteMessage(req , res) {
     const userId = req.userId;
     const username = req.username;
@@ -71,6 +104,7 @@ async function getMessages(req , res) {
 
 module.exports = {
     sendMessage , 
+    uploadImage ,
     deleteMessage ,
     getMessages
 };

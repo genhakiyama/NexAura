@@ -303,6 +303,36 @@ export default function ChatPage() {
     }
   };
 
+  // ---- Upload image over HTTP ----
+  const handleImageUpload = async (file) => {
+    if (!activeId) return;
+    try {
+      const payload = await api.uploadImage({ conversationId: activeId, file });
+      const messageId = Number(payload?.messageId);
+      const imageUrl = payload?.imageUrl;
+
+      if (messageId && imageUrl) {
+        setMessages((prev) =>
+          upsertIncoming(
+            prev,
+            {
+              id: messageId,
+              from: user?.username,
+              message: imageUrl,
+              type: 'image',
+              senderId: user?.userId,
+              createdAt: new Date().toISOString(),
+            },
+            user?.username
+          ).list
+        );
+      }
+    } catch (err) {
+      setError(err.message);
+      throw err; // let Composer know so it keeps the preview
+    }
+  };
+
   const handleDelete = async (messageId) => {
     if (!Number.isInteger(messageId)) {
       // Never send a temp id to the API: Postgres rejects `tmp-...` for the
@@ -465,7 +495,7 @@ export default function ChatPage() {
               currentUserId={user?.userId}
               currentUsername={user?.username}
             />
-            <Composer disabled={!activeId} onSend={handleSend} />
+            <Composer disabled={!activeId} onSend={handleSend} onImageUpload={handleImageUpload} />
           </div>
 
           {showInfo && activeId && (
