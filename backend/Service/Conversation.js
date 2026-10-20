@@ -32,10 +32,21 @@ async function getMyConversations(userId) {
 }
 
 async function createNewChat(userId , username , conversation_name , converstation_type){
+    // Missing fields used to reach Sequelize/Postgres and surface as a 500
+    // (`Conversation.type cannot be null`, or `WHERE parameter "undefined"`).
+    const name = typeof conversation_name === 'string' ? conversation_name.trim() : '';
+    const type = converstation_type === 'direct' ? 'direct' : 'group';
+    if (!name) {
+        return {
+            status_code : chatErr.InvalidChatNameError.defaultStatusCode , 
+            error : 'Tên đoạn chat không được để trống.'
+        }
+    }
+
     const isMem = await ConverMem.findOne({
         where : {
             userId : userId , 
-            conversationName : conversation_name
+            conversationName : name
         }
     });
 
@@ -45,13 +56,13 @@ async function createNewChat(userId , username , conversation_name , converstati
     }
 
     const conversation = await Conversation.create({ 
-        name : conversation_name , 
-        type : converstation_type
+        name ,
+        type
     });
 
     await conversation.addUser(userId , {
         through : {
-            userRole : 'admin' , conversationName : conversation_name
+            userRole : 'admin' , conversationName : name
         }
     });
 
@@ -71,10 +82,21 @@ async function createNewChat(userId , username , conversation_name , converstati
 }
 
 async function joinChat(username , userId , conversationId){
+    // The route param arrives as a string straight from the URL. A non-numeric
+    // or out-of-range value used to reach Postgres as-is and raise
+    // `invalid input syntax for type integer`, which surfaced as a 500.
+    const id = Number(conversationId);
+    if (!Number.isInteger(id) || id <= 0 || id > 2147483647) {
+        return {
+            status_code : chatErr.InvalidChatNameError.defaultStatusCode , 
+            error : chatErr.InvalidChatNameError.defaultMessage
+        }
+    }
+
     const isMem = await ConverMem.findOne({
         where : {
             userId , 
-            conversationId
+            conversationId : id
         }
     });
 
@@ -86,7 +108,7 @@ async function joinChat(username , userId , conversationId){
 
     const conversation = await Conversation.findOne({
         where : {
-            id : conversationId
+            id
         }
     });
 

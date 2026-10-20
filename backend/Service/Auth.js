@@ -16,6 +16,21 @@ async function SignUp(email , username , password) {
             };
         }
 
+        // A missing username/password used to reach Sequelize and throw
+        // `WHERE parameter "username" has invalid "undefined" value` -> 500.
+        if (!username || typeof username !== 'string' || !username.trim()) {
+            return {
+                status_code : 400 ,
+                error : 'Tên đăng nhập không được để trống.'
+            };
+        }
+        if (!password || typeof password !== 'string' || password.length < 6) {
+            return {
+                status_code : 400 ,
+                error : 'Mật khẩu phải có ít nhất 6 ký tự.'
+            };
+        }
+
         const existingUser = await User.findOne({
             where : {
                 username : username
@@ -47,6 +62,15 @@ async function SignUp(email , username , password) {
 }   
 
 async function Login(email  , username , password){
+    // A missing field used to reach Sequelize and throw
+    // `WHERE parameter "email" has invalid "undefined" value` -> 500.
+    if (!email || !username || !password) {
+        return {
+            status_code : 400 ,
+            error : 'Vui lòng nhập đầy đủ email, tên đăng nhập và mật khẩu.'
+        }
+    }
+
     const user = await User.findOne({where : {email : email , username : username}});
     if (!user) {
         return {

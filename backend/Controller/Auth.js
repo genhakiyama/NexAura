@@ -7,7 +7,10 @@ const Email = require('../Service/Email');
 let Token ;
 
 async function Signup(req , res) {
-    const {email , username , password } = req.body;
+    // express.json() leaves req.body undefined when the client sends no body at
+    // all (or a Content-Type the parser ignores). Destructuring that threw a
+    // TypeError and the browser only saw a generic 500.
+    const {email , username , password } = req.body || {};
     try {
         const authen = await Authen.SignUp(email , username , password );
         if (authen.error){
@@ -35,29 +38,40 @@ async function Signup(req , res) {
 };
 
 async function LogIn(req , res) {
-    const {username , email , password} = req.body;
-    const isCheck = await Authen.Login(email , username , password);
+    const {username , email , password} = req.body || {};
 
-    if (isCheck.error) return res.status(isCheck.status_code).json({
-        sucess : false , 
-        payload : {
-            message : isCheck.error
-        }
-    });
+    // Login had no try/catch, so any rejection (a bad WHERE value, a database
+    // cold-start failure) became an unhandled 500 instead of a usable message.
+    try {
+        const isCheck = await Authen.Login(email , username , password);
 
-    const userId = isCheck.userId
+        if (isCheck.error) return res.status(isCheck.status_code || 400).json({
+            sucess : false , 
+            payload : {
+                message : isCheck.error
+            }
+        });
 
-    const Token = jwt.sign({
-        username , email , userId
-    } , process.env.SECRET_KEY , {expiresIn : '1h'});
+        const userId = isCheck.userId
 
-    return res.status(200).json({
-        sucess : true , 
-        payload : {
-            message : isCheck.message,
-            token : Token
-        }
-    });
+        const Token = jwt.sign({
+            username , email , userId
+        } , process.env.SECRET_KEY , {expiresIn : '1h'});
+
+        return res.status(200).json({
+            sucess : true , 
+            payload : {
+                message : isCheck.message,
+                token : Token
+            }
+        });
+    } catch (err) {
+        console.error('[Login error]' , err);
+        return res.status(500).json({
+            success : false ,
+            payload : { message : 'Đã xảy ra lỗi máy chủ. Vui lòng thử lại.' }
+        });
+    }
 }
 
 async function VerifyEmail(req , res) {

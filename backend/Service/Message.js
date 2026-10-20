@@ -78,17 +78,19 @@ async function sendMessage(senderId , username , type , conversationId , content
     const member = await isMember(senderId, conversationId);
     if (member.error) return member;
 
+    const id = Number(conversationId);
+
     const message = await Message.create({
         type , status : 'sent' , content : text ,
         userId : senderId ,
-        conversationId : conversationId
+        conversationId : id
     });
 
-    room.sendToRoom(conversationId , {
+    room.sendToRoom(id , {
         id : message.id,
         from : username , 
         message : text ,
-        chatId : conversationId,
+        chatId : id,
         createdAt: message.createdAt
     });
 
@@ -102,9 +104,19 @@ async function deleteMessage(senderId , username , conversationId , messageId) {
     const member = await isMember(senderId , conversationId);
     if (member.error) return member;
 
+    // A non-numeric messageId (a temp client id, or a malformed request) used to
+    // reach Postgres as-is and raise a 500. Reject it as a normal 404 instead.
+    const id = Number(messageId);
+    if (!Number.isInteger(id) || id <= 0) {
+        return {
+            status_code : messageErr.MessageNotFoundError.defaultStatusCode ,
+            error : messageErr.MessageNotFoundError.defaultMessage
+        }
+    }
+
     // Look the row up BEFORE destroying it: Message.destroy() only returns the
     // number of affected rows, so ownership can never be checked from it.
-    const message = await Message.findOne({ where : { id : messageId } });
+    const message = await Message.findOne({ where : { id } });
     if (!message) {
         return {
             status_code : messageErr.MessageNotFoundError.defaultStatusCode ,
@@ -124,7 +136,7 @@ async function deleteMessage(senderId , username , conversationId , messageId) {
 
     // io.to(room) so every client in the room — including the one that deleted —
     // drops the message without reloading.
-    room.sendDeletedRoom(conversationId , {id : Number(messageId) , chatId : Number(conversationId)});
+    room.sendDeletedRoom(Number(conversationId) , {id , chatId : Number(conversationId)});
     return {message : 'Tin nhắn đã được xoá'};
 }
 
