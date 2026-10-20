@@ -40,6 +40,13 @@ async function uploadImage(req , res) {
         });
     }
 
+    if (!req.file || !req.file.buffer) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'Vui lòng chọn một tệp ảnh để tải lên.' }
+        });
+    }
+
     try {
         const result = await MessageService.sendImageMessage(
             userId , username , conversationId , req.file

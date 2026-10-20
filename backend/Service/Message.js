@@ -106,15 +106,15 @@ async function sendMessage(senderId , username , type , conversationId , content
 async function sendImageMessage(senderId , username , conversationId , file) {
     if (!file || !file.buffer) {
         return {
-            status_code : messageErr.InvalidAttachmentError.defaultStatusCode ,
-            error : messageErr.InvalidAttachmentError.defaultMessage
+            status_code : 400 ,
+            error : 'Vui lòng đính kèm một tệp ảnh hợp lệ.'
         };
     }
 
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > 4 * 1024 * 1024) {
         return {
             status_code : messageErr.AttachmentTooLargeError.defaultStatusCode ,
-            error : messageErr.AttachmentTooLargeError.defaultMessage
+            error : 'Tệp ảnh vượt quá dung lượng cho phép (tối đa 4MB trên Vercel).'
         };
     }
 
@@ -124,18 +124,18 @@ async function sendImageMessage(senderId , username , conversationId , file) {
     const id = Number(conversationId);
 
     // Upload to Supabase Storage and get the public URL
-    let imageUrl;
+    let uploadResult;
     try {
-        imageUrl = await uploadImage(
-            file.buffer , file.originalname , file.mimetype , id
-        );
+        uploadResult = await uploadImage(file , id);
     } catch (err) {
         console.error('[sendImageMessage] upload error:' , err.message);
         return {
-            status_code : 500 ,
+            status_code : err.statusCode || 500 ,
             error : `Lỗi lưu trữ ảnh: ${err.message}`
         };
     }
+
+    const imageUrl = uploadResult.publicUrl;
 
     const message = await Message.create({
         type : 'image' ,

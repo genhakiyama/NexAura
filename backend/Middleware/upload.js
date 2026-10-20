@@ -6,7 +6,7 @@ const storage = multer.memoryStorage();
 
 // Only accept common image types.
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-const MAX_SIZE_MB   = 5;
+const MAX_SIZE_MB   = 4; // Giới hạn body Vercel function ~4.5MB
 
 const upload = multer({
     storage,

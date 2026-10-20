@@ -1,77 +1,34 @@
+const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
-/**
- * Lightweight Supabase Storage client using only fetch (no SDK needed).
- *
- * Reads the same SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY already in .env.
- * The project ref is extracted from the connection string so no extra env vars
- * are required.
- */
-
-// Extract the project ref from the Supabase connection URL.
-// Format: postgresql://postgres.<ref>:...@...
-function extractProjectRef(url) {
-    const match = (url || '').match(/postgres\.([a-z0-9]+)/i);
-    return match ? match[1] : null;
+function getSupabaseUrl() {
+    const raw = process.env.SUPABASE_PROJECT_URL || process.env.SUPABASE_URL || '';
+    if (raw.startsWith('http')) return raw;
+    const match = raw.match(/postgres\.([a-z0-9]+)/i);
+    return match ? `https://${match[1]}.supabase.co` : raw;
 }
 
-const PROJECT_REF = extractProjectRef(process.env.SUPABASE_URL);
-const SERVICE_KEY  = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const supabaseUrl = getSupabaseUrl();
+const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
-if (!PROJECT_REF) {
-    console.warn('[supabase] could not extract project ref from SUPABASE_URL');
+if (!supabaseUrl) {
+    console.warn('[supabase] Cảnh báo: Chưa cấu hình SUPABASE_URL');
 }
-if (!SERVICE_KEY) {
-    console.warn('[supabase] SUPABASE_SERVICE_ROLE_KEY is missing');
-} else if (!SERVICE_KEY.startsWith('ey')) {
-    console.warn('[supabase] CẢNH BÁO: SUPABASE_SERVICE_ROLE_KEY phải là chuỗi JWT (bắt đầu bằng eyJ...). Key hiện tại (sb_secret_...) là CLI Personal Access Token, không dùng được cho Storage API.');
+if (!supabaseKey) {
+    console.warn('[supabase] Cảnh báo: Chưa cấu hình SUPABASE_SERVICE_ROLE_KEY');
 }
 
-const STORAGE_BASE = PROJECT_REF
-    ? `https://${PROJECT_REF}.supabase.co/storage/v1`
-    : null;
-
-const BUCKET = 'chat-images';
-
-/**
- * Upload a buffer to Supabase Storage and return its public URL.
- *
- * @param {Buffer}  buffer      File contents
- * @param {string}  fileName    Destination path inside the bucket (e.g. "conv-5/abc.png")
- * @param {string}  contentType MIME type
- * @returns {Promise<string>}   Public URL of the uploaded file
- */
-async function uploadToStorage(buffer, fileName, contentType) {
-    if (!STORAGE_BASE) {
-        throw new Error('Supabase Storage chưa được cấu hình (thiếu project ref trong SUPABASE_URL).');
+const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+        persistSession: false,
+        autoRefreshToken: false,
     }
-    if (!SERVICE_KEY || !SERVICE_KEY.startsWith('ey')) {
-        throw new Error('SUPABASE_SERVICE_ROLE_KEY không hợp lệ hoặc sai định dạng. Cần chuỗi JWT bắt đầu bằng eyJ... từ Supabase Dashboard > Project Settings > API.');
-    }
+});
 
-    const url = `${STORAGE_BASE}/object/${BUCKET}/${fileName}`;
-
-    const res = await fetch(url, {
-        method : 'POST',
-        headers : {
-            'Authorization'  : `Bearer ${SERVICE_KEY}`,
-            'Content-Type'   : contentType,
-            'x-upsert'       : 'true',   // overwrite if same name
-        },
-        body : buffer,
-    });
-
-    if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`Supabase upload failed (${res.status}): ${body}`);
-    }
-
-    // Public URL (bucket must have public access enabled)
-    return `${STORAGE_BASE}/object/public/${BUCKET}/${fileName}`;
-}
+const BUCKET_NAME = 'chat-images';
 
 module.exports = {
-    BUCKET,
-    STORAGE_BASE,
-    uploadToStorage,
+    supabase,
+    supabaseUrl,
+    BUCKET_NAME,
 };

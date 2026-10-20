@@ -27,10 +27,6 @@ app.use(helmet({
 }));
 app.use(morgan('combined' , {stream : accessLogStream}));
 
-// Serve uploaded media statically
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
-
-
 //---- ROUTES 
     const AuthenHandler = require('../Routes/AuthHandler');
     const isAuth = require('../Middleware/is-auth');

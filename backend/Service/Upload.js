@@ -1,55 +1,66 @@
-const sharp = require('sharp');
-const fs = require('fs/promises');
 const path = require('path');
-const crypto = require('crypto');
-
-// Target directory for local file storage: backend/uploads
-const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
+const { supabase, BUCKET_NAME } = require('../Config/Supabase');
 
 /**
- * Compress an image buffer using Sharp and save it to the local uploads directory.
+ * Upload an image buffer to Supabase Storage.
  *
- * Flow:
- * 1. Ensure conversation folder exists: backend/uploads/conv-<conversationId>
- * 2. Process image with Sharp:
- *    - Auto-rotate according to EXIF orientation
- *    - Limit maximum width/height to 1600px (withoutEnlargement keeps smaller images intact)
- *    - Convert and compress to modern WebP format at 80% quality (cuts file size by ~70-85%)
- * 3. Write compressed file to disk with unique random hex name
- * 4. Return relative static URL: /uploads/conv-<conversationId>/<filename>.webp
+ * Requirements:
+ * - Stored in bucket "chat-images"
+ * - Path format: conv-${conversationId}/${Date.now()}.${ext}
+ * - contentType = file.mimetype
+ * - upsert: false
+ * - Returns publicUrl from getPublicUrl(path)
  *
- * @param {Buffer} buffer          Raw file buffer from Multer
- * @param {string} originalName    Original filename from client
- * @param {string} mimetype        MIME type
- * @param {number} conversationId  ID of the conversation
- * @returns {Promise<string>}      Relative URL path to the saved compressed image
+ * @param {Object} file            Multer file object (file.buffer, file.originalname, file.mimetype)
+ * @param {number} conversationId  Target conversation ID
+ * @returns {Promise<{ publicUrl: string, path: string }>}
  */
-async function uploadImage(buffer, originalName, mimetype, conversationId) {
-    const convDir = path.join(UPLOAD_ROOT, `conv-${conversationId}`);
-    await fs.mkdir(convDir, { recursive: true });
+async function uploadImage(file, conversationId) {
+    if (!file || !file.buffer) {
+        const err = new Error('Không có dữ liệu file để tải lên.');
+        err.statusCode = 400;
+        throw err;
+    }
 
-    const filename = `${crypto.randomBytes(16).toString('hex')}.webp`;
-    const targetPath = path.join(convDir, filename);
+    // Determine extension safely without original special characters
+    const rawExt = path.extname(file.originalname || '').replace(/^\./, '').toLowerCase();
+    const ext = rawExt || (file.mimetype ? file.mimetype.split('/')[1] : 'png') || 'png';
 
-    // Compress & convert to WebP
-    await sharp(buffer)
-        .rotate() // auto-orient based on EXIF tag
-        .resize({
-            width: 1600,
-            height: 1600,
-            fit: 'inside',
-            withoutEnlargement: true
-        })
-        .webp({
-            quality: 80,
-            effort: 4
-        })
-        .toFile(targetPath);
+    // Path format: conv-${conversationId}/${Date.now()}.${ext}
+    const storagePath = `conv-${conversationId}/${Date.now()}.${ext}`;
 
-    return `/uploads/conv-${conversationId}/${filename}`;
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(storagePath, file.buffer, {
+            contentType: file.mimetype || 'image/png',
+            upsert: false
+        });
+
+    if (error) {
+        console.error('[Supabase Storage Upload Error]:', {
+            message: error.message,
+            statusCode: error.statusCode,
+            error: error.error,
+            path: storagePath
+        });
+        throw new Error(`Supabase Storage: ${error.message || 'Lỗi tải ảnh lên cloud'}`);
+    }
+
+    // Retrieve public URL
+    const { data: publicUrlData } = supabase.storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(storagePath);
+
+    const publicUrl = publicUrlData?.publicUrl;
+
+    return {
+        publicUrl,
+        path: storagePath
+    };
 }
 
 module.exports = {
     uploadImage,
-    UPLOAD_ROOT
+    BUCKET_NAME
 };
