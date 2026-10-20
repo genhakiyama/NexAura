@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "builds": [
     {
-      "src": "backend/build.js",
+      "src": "backend/index.js",
       "use": "@vercel/node"
     },
     {
@@ -13,19 +13,19 @@
   "routes": [
     {
       "src": "/health",
-      "dest": "backend/index.js"
+      "dest": "/backend/index.js"
     },
     {
       "src": "/auth/(.*)",
-      "dest": "backend/index.js"
+      "dest": "/backend/index.js"
     },
     {
       "src": "/chat/(.*)",
-      "dest": "backend/index.js"
+      "dest": "/backend/index.js"
     },
     {
       "src": "/(.*)",
-      "dest": "frontend/$1"
+      "dest": "/frontend/$1"
     }
   ]
 }
