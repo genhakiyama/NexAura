@@ -1,40 +1,32 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "services": {
-    "frontend": {
-      "root": "frontend/",
-      "framework": "vite"
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
     },
-    "backend": {
-      "root": "backend/",
-      "framework": "express",
-      "entrypoint": "index.js"
+    {
+      "src": "backend/index.js",
+      "use": "@vercel/node"
     }
-  },
-  "rewrites": [
+  ],
+  "routes": [
     {
-      "source": "/health",
-      "destination": { "service": "backend" }
+      "src": "/health",
+      "dest": "backend/index.js"
     },
     {
-      "source": "/auth/(.*)",
-      "destination": { "service": "backend" }
+      "src": "/auth/(.*)",
+      "dest": "backend/index.js"
     },
     {
-      "source": "/chat/(.*)",
-      "destination": { "service": "backend" }
+      "src": "/chat/(.*)",
+      "dest": "backend/index.js"
     },
     {
-      "source": "/socket.io/(.*)",
-      "destination": { "service": "backend" }
-    },
-    {
-      "source": "/socket.io",
-      "destination": { "service": "backend" }
-    },
-    {
-      "source": "/(.*)",
-      "destination": { "service": "frontend" }
+      "src": "/(.*)",
+      "dest": "frontend/$1"
     }
   ]
 }
