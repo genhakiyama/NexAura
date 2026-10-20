@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { getToken, clearToken, UNAUTHORIZED_EVENT } from '../api';
 
+// Empty in local dev (Vite proxies /socket.io); on Vercel it points at Render.
+const SOCKET_URL = (
+  import.meta.env.VITE_SOCKET_URL ||
+  import.meta.env.VITE_API_URL ||
+  ''
+).replace(/\/+$/, '');
+
 // Opens one Socket.IO connection authenticated with the same JWT the HTTP
 // layer uses (backend reads it from handshake.auth.token).
 //
@@ -28,7 +35,7 @@ export function useSocket(token) {
 
     // Let Socket.IO fall back to polling: forcing websocket-only turns a
     // blocked/upgraded websocket into a hard "never connects" failure.
-    const socket = io({
+    const socket = io(SOCKET_URL || undefined, {
       auth: { token: authToken },
       withCredentials: true,
       reconnection: true,

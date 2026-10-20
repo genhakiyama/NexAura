@@ -5,8 +5,14 @@ const fs = require('fs');
 const path = require('path');
 
 const cors = require('cors');
+
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173"],
+  origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true,
 }));

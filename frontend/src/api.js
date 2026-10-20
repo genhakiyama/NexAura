@@ -1,5 +1,9 @@
 const TOKEN_KEY = 'nexora_token';
 
+// Set VITE_API_URL on Vercel to the Render backend origin.
+// Empty in local dev so the Vite proxy handles /auth, /chat and /socket.io.
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -43,7 +47,7 @@ async function request(method, path, body, { auth = true } = {}) {
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(path, {
+  const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
