@@ -21,8 +21,21 @@ transporter.on('error' , (err) => {
     console.error('[mail transport error]' , err.message);
 });
 
+function resolveBaseUrl() {
+    const configured = String(process.env.BASE_URL || '').trim().replace(/\/+$/, '');
+    const renderUrl = String(process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/+$/, '');
+    const pointsToLocalhost = !configured || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(configured);
+
+    // Render exposes RENDER_EXTERNAL_URL automatically. Prefer it when
+    // BASE_URL still contains the local development address, otherwise the
+    // verification link in the email points at localhost and the account can
+    // never be verified from a deployed signup.
+    if (renderUrl && pointsToLocalhost) return renderUrl;
+    return configured || renderUrl || 'http://localhost:3000';
+}
+
 async function SendVerification(email , token) {
-    const link = `${process.env.BASE_URL}/auth/verify-Email?token=${token}`;
+    const link = `${resolveBaseUrl()}/auth/verify-Email?token=${token}`;
     try {
         return await transporter.sendMail({
             from : process.env.EMAIL_USER ,
@@ -82,5 +95,6 @@ async function verifyEmail(token) {
 
 module.exports = {
     SendVerification,
-    verifyEmail
+    verifyEmail,
+    resolveBaseUrl
 };

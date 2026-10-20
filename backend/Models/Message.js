@@ -10,7 +10,7 @@ module.exports = sequelize.define('Message' , {
     } , 
     type : {
         type : DataTypes.ENUM('text' , 'image' , 'file' , 'system'),
-        default : 'text'
+        defaultValue : 'text'
     },
     status : {
         type: DataTypes.ENUM('delivered' , 'sent' , 'seen') ,  

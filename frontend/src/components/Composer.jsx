@@ -18,6 +18,7 @@ export default function Composer({ disabled, onSend }) {
         value={text}
         placeholder={disabled ? 'Chọn đoạn chat để nhắn tin' : 'Nhập tin nhắn...'}
         disabled={disabled}
+        maxLength={255}
         onChange={(e) => setText(e.target.value)}
       />
       <button type="submit" className="primary" disabled={disabled || !text.trim()}>

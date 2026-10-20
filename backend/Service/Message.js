@@ -48,11 +48,28 @@ async function getMessages(userId , conversationId) {
 }
 
 async function sendMessage(senderId , username , type , conversationId , content) {
+    const text = typeof content === 'string' ? content.trim() : '';
+    if (!text) {
+        return {
+            status_code : 400,
+            error : 'Nội dung tin nhắn không được để trống.'
+        }
+    }
+
+    // Message.content is VARCHAR(255); without this check Postgres throws
+    // "value too long" and the browser only sees a generic 500.
+    if (text.length > 255) {
+        return {
+            status_code : 400,
+            error : 'Tin nhắn tối đa 255 ký tự.'
+        }
+    }
+
     const member = await isMember(senderId, conversationId);
     if (member.error) return member;
 
     const message = await Message.create({
-        type , status : 'sent' , content ,
+        type , status : 'sent' , content : text ,
         userId : senderId ,
         conversationId : conversationId
     });
@@ -60,7 +77,7 @@ async function sendMessage(senderId , username , type , conversationId , content
     room.sendToRoom(conversationId , {
         id : message.id,
         from : username , 
-        message : content ,
+        message : text ,
         chatId : conversationId,
         createdAt: message.createdAt
     });

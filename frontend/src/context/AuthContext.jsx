@@ -18,10 +18,12 @@ export function AuthProvider({ children }) {
     let alive = true;
     api
       .myChats()
-      .catch(() => {
+      .catch((err) => {
         if (!alive) return;
-        clearToken();
-        setUser(null);
+        // 401 already clears the token through the global UNAUTHORIZED event.
+        // A network/CORS failure must NOT log the user out and destroy a valid
+        // session — the chat page will show the connection error instead.
+        console.error('[session check failed]', err.message);
       })
       .finally(() => {
         if (alive) setChecking(false);
@@ -44,6 +46,9 @@ export function AuthProvider({ children }) {
   const login = async ({ email, username, password }) => {
     const payload = await api.login({ email, username, password });
     // Backend puts the token under payload.token (watch for its `sucess` typo — we only read payload).
+    if (!payload?.token) {
+      throw new Error('Backend không trả về token đăng nhập. Kiểm tra VITE_API_URL và thử lại.');
+    }
     setToken(payload.token);
     setTokenState(payload.token);
     setUser(decodeToken(payload.token));

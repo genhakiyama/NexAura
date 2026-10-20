@@ -1,8 +1,21 @@
 const TOKEN_KEY = 'nexora_token';
 
+export function normalizeBaseUrl(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 // Set VITE_API_URL on Vercel to the Render backend origin.
 // Empty in local dev so the Vite proxy handles /auth, /chat and /socket.io.
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const API_BASE = normalizeBaseUrl(
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || ''
+);
+
+// In a production build an empty base means every request falls into the
+// Vercel SPA rewrite and gets index.html. Surface that instead of crashing on
+// a null JSON payload.
+export const API_CONFIGURED = !import.meta.env.PROD || Boolean(API_BASE);
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -47,17 +60,30 @@ async function request(method, path, body, { auth = true } = {}) {
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(
+      API_BASE
+        ? `Không kết nối được tới backend (${API_BASE}). Kiểm tra service Render đã chạy và CORS đã cho phép domain này.`
+        : 'Không kết nối được tới backend. Bản deploy chưa cấu hình VITE_API_URL.',
+      0
+    );
+  }
 
   let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    // non-JSON body
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch {
+      // malformed JSON, handled below
+    }
   }
 
   if (!res.ok) {
@@ -68,10 +94,22 @@ async function request(method, path, body, { auth = true } = {}) {
       clearToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
+    const serverMessage = data && (data.payload?.error || data.payload?.message || data.error);
     const message =
-      (data && (data.payload?.error || data.payload?.message || data.error)) ||
-      `Yêu cầu thất bại (${res.status})`;
+      serverMessage ||
+      (API_BASE
+        ? `Yêu cầu thất bại (${res.status})`
+        : `Frontend chưa cấu hình VITE_API_URL nên request đang rơi vào trang Vercel (HTTP ${res.status}). Hãy đặt VITE_API_URL = URL Render rồi redeploy.`);
     throw new ApiError(message, res.status);
+  }
+
+  if (data === null) {
+    throw new ApiError(
+      API_BASE
+        ? 'Backend trả về dữ liệu không hợp lệ (không phải JSON).'
+        : 'Frontend chưa cấu hình VITE_API_URL nên request đang rơi vào trang Vercel. Hãy đặt VITE_API_URL = URL Render rồi redeploy.',
+      res.status
+    );
   }
 
   return data?.payload ?? data;

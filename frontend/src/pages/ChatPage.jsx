@@ -26,7 +26,7 @@ const idIn = (list, id) => list.some((x) => sameId(x, id));
 
 export default function ChatPage() {
   const { user, logout, token } = useAuth();
-  const { connected, authFailed, on, off, emit } = useSocket(token);
+  const { connected, authFailed, configured, on, off, emit } = useSocket(token);
   const { theme, toggle: toggleTheme } = useTheme();
 
   const [conversations, setConversations] = useState([]);
@@ -322,14 +322,22 @@ export default function ChatPage() {
               </button>
             )}
             <span
-              className={connected ? 'dot on' : authFailed ? 'dot off' : 'dot off'}
+              className={connected ? 'dot on' : 'dot off'}
               title={
                 authFailed
                   ? 'Phiên đăng nhập đã hết hạn, đang chuyển về trang đăng nhập'
-                  : undefined
+                  : !configured
+                    ? 'Thiếu VITE_API_URL trong bản build production'
+                    : undefined
               }
             >
-              {connected ? 'trực tuyến' : authFailed ? 'hết phiên' : 'đang kết nối...'}
+              {connected
+                ? 'trực tuyến'
+                : authFailed
+                  ? 'hết phiên'
+                  : !configured
+                    ? 'chưa cấu hình backend'
+                    : 'đang kết nối...'}
             </span>
           </span>
         </div>

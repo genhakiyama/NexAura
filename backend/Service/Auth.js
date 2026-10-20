@@ -48,12 +48,17 @@ async function SignUp(email , username , password) {
 
 async function Login(email  , username , password){
     const user = await User.findOne({where : {email : email , username : username}});
-    if (!user || !user.isVerified) {
-        {
-            return {
-                status_code : authErr.UserNotFoundError.defaultStatusCode,
-                error : authErr.UserNotFoundError.defaultMessage
-            }
+    if (!user) {
+        return {
+            status_code : authErr.UserNotFoundError.defaultStatusCode,
+            error : authErr.UserNotFoundError.defaultMessage
+        }
+    }
+
+    if (!user.isVerified) {
+        return {
+            status_code : 403,
+            error : 'Tài khoản chưa xác thực email. Hãy mở link xác thực trong email đăng kí (kiểm tra cả thư rác).'
         }
     }
 

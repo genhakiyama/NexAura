@@ -14,18 +14,31 @@ async function joinRoom(conversationId , userId , notificationData) {
 
 async function notifcationToRoom(conversationId , notification){
     const roomName = `conversation:${conversationId}`;
-    getIO().to(roomName).emit('new_notification' , notification);
+    try {
+        getIO().to(roomName).emit('new_notification' , notification);
+    } catch (err) {
+        console.error('[socket] notification broadcast failed:' , err.message);
+    }
 }
 
 async function sendToRoom(conversationId , message) {
     const roomName = `conversation:${conversationId}`;
-    getIO().to(roomName).emit('send_message' , message);
+    try {
+        getIO().to(roomName).emit('send_message' , message);
+    } catch (err) {
+        // The message is already persisted; a socket problem must not turn the
+        // HTTP send into a 500 and make the sender think it was not saved.
+        console.error('[socket] message broadcast failed:' , err.message);
+    }
 }
 
 async function sendDeletedRoom(conversationId , payload) {
     const roomName = `conversation:${conversationId}`;
-
-    getIO().to(roomName).emit('message_deleted' , payload);
+    try {
+        getIO().to(roomName).emit('message_deleted' , payload);
+    } catch (err) {
+        console.error('[socket] delete broadcast failed:' , err.message);
+    }
 }
 
 module.exports = {

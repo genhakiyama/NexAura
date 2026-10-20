@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { getToken, clearToken, UNAUTHORIZED_EVENT } from '../api';
+import {
+  getToken,
+  clearToken,
+  normalizeBaseUrl,
+  UNAUTHORIZED_EVENT,
+} from '../api';
 
 // Empty in local dev (Vite proxies /socket.io); on Vercel it points at Render.
-const SOCKET_URL = (
+const SOCKET_URL = normalizeBaseUrl(
   import.meta.env.VITE_SOCKET_URL ||
-  import.meta.env.VITE_API_URL ||
-  ''
-).replace(/\/+$/, '');
+    import.meta.env.VITE_API_URL ||
+    import.meta.env.VITE_BACKEND_URL ||
+    ''
+);
+const SOCKET_CONFIGURED = !import.meta.env.PROD || Boolean(SOCKET_URL);
+
+if (!SOCKET_CONFIGURED) {
+  console.error(
+    '[socket] VITE_API_URL/VITE_SOCKET_URL is missing in this production build; Socket.IO will hit the Vercel origin.'
+  );
+}
 
 // Opens one Socket.IO connection authenticated with the same JWT the HTTP
 // layer uses (backend reads it from handshake.auth.token).
@@ -118,7 +131,7 @@ export function useSocket(token) {
   }, []);
 
   return useMemo(
-    () => ({ socket: socketRef, connected, authFailed, on, off, emit }),
+    () => ({ socket: socketRef, connected, authFailed, configured: SOCKET_CONFIGURED, on, off, emit }),
     [connected, authFailed, on, off, emit]
   );
 }
