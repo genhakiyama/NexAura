@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { resolveMediaUrl } from '../api';
 
 function formatTime(ts) {
   if (!ts) return '';
@@ -68,10 +69,10 @@ export default function MessageList({ messages, currentUserId, currentUsername }
               {isImage ? (
                 <img
                   className="msg-image"
-                  src={m.content}
+                  src={resolveMediaUrl(m.content)}
                   alt="Ảnh"
                   loading="lazy"
-                  onClick={() => openLightbox(m.content)}
+                  onClick={() => openLightbox(resolveMediaUrl(m.content))}
                 />
               ) : (
                 m.content

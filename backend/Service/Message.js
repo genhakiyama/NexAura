@@ -1,5 +1,6 @@
 require('dotenv').config();
 const Message = require('../Models/Message');
+const Image = require('../Models/Image');
 const User = require('../Models/User');
 const Conversation = require('../Models/Conversation');
 const ConverMem = require('../Models/ConversationMembers');
@@ -143,6 +144,21 @@ async function sendImageMessage(senderId , username , conversationId , file) {
         userId : senderId ,
         conversationId : id
     });
+
+    // Tạo bản ghi Image liên kết tương ứng
+    try {
+        await Image.create({
+            url : imageUrl ,
+            originalName : file.originalname ,
+            mimetype : file.mimetype ,
+            size : file.size ,
+            userId : senderId ,
+            conversationId : id ,
+            messageId : message.id
+        });
+    } catch (imageErr) {
+        console.error('[sendImageMessage] failed to create Image record:' , imageErr.message);
+    }
 
     room.sendToRoom(id , {
         id : message.id ,

@@ -10,9 +10,20 @@ export function normalizeBaseUrl(value) {
 // /socket.io to :3000, and the Vercel deployment routes those paths to the
 // backend service on the same domain. VITE_API_URL is only needed when the API
 // lives on another host.
-const API_BASE = normalizeBaseUrl(
+export const API_BASE = normalizeBaseUrl(
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || ''
 );
+
+/**
+ * Resolves an image/media URL:
+ * - If it's already an absolute URL (e.g. Supabase or external CDN), keep it.
+ * - If it's a relative path (e.g. /uploads/...), prepend API_BASE if configured.
+ */
+export function resolveMediaUrl(url) {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return API_BASE ? `${API_BASE}${url}` : url;
+}
 
 // Same-origin requests are always configured. Kept as an export because
 // AuthPage renders a deployment warning based on it.

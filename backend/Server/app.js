@@ -22,8 +22,13 @@ const accessLogStream = process.env.NODE_ENV === 'production' || process.env.REN
   ? process.stdout
   : fs.createWriteStream(path.join(__dirname, 'access.log'), { flags: 'a' });
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(morgan('combined' , {stream : accessLogStream}));
+
+// Serve uploaded media statically
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 
 //---- ROUTES 
@@ -36,6 +41,7 @@ app.use(morgan('combined' , {stream : accessLogStream}));
     const Conversation = require('../Models/Conversation');
     const ConversationMem = require('../Models/ConversationMembers');
     const Message = require('../Models/Message');
+    const Image = require('../Models/Image');
 
     User.belongsToMany(Conversation, {
         through: ConversationMem, 
@@ -51,6 +57,19 @@ app.use(morgan('combined' , {stream : accessLogStream}));
 
     Conversation.hasMany(Message , {foreignKey : 'conversationId'});
     Message.belongsTo(Conversation , {foreignKey : 'conversationId'});
+
+    //---- IMAGE ASSOCIATIONS
+    // 1 image ứng với 1 message và ngược lại (1-to-1)
+    Message.hasOne(Image, { foreignKey: 'messageId', onDelete: 'CASCADE' });
+    Image.belongsTo(Message, { foreignKey: 'messageId', onDelete: 'CASCADE' });
+
+    // 1 conversation có nhiều image, image thuộc về 1 conversation (1-to-many)
+    Conversation.hasMany(Image, { foreignKey: 'conversationId', onDelete: 'CASCADE' });
+    Image.belongsTo(Conversation, { foreignKey: 'conversationId', onDelete: 'CASCADE' });
+
+    // 1 user có nhiều image, image thuộc về 1 user (1-to-many)
+    User.hasMany(Image, { foreignKey: 'userId', onDelete: 'CASCADE' });
+    Image.belongsTo(User, { foreignKey: 'userId', onDelete: 'CASCADE' });
 
 app.use(express.json());
 
