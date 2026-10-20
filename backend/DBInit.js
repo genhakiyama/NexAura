@@ -1,15 +1,15 @@
 const sequelize = require('./UTIL/Database');
 
-// Vercel runs each cold start in a fresh function instance, so schema sync
-// must stay opt-in there. Local `nodemon server.js` keeps the previous
-// behaviour (sync + alter) because that is the development database.
-const isServerless = Boolean(process.env.VERCEL);
-const shouldSync = process.env.DB_SYNC !== undefined
-    ? process.env.DB_SYNC === 'true'
-    : !isServerless;
-const shouldAlter = process.env.DB_SYNC_ALTER !== undefined
-    ? process.env.DB_SYNC_ALTER === 'true'
-    : !isServerless;
+// Schema sync is ALWAYS opt-in, on Vercel and locally.
+//
+// This project points at a single Supabase database, and `sync({ alter: true })`
+// drops and rewrites columns to match the models. Running it against the shared
+// production database once already removed Message.userId and
+// Message.conversationId. Importing Sequelize models no longer mutates the
+// schema on its own: set DB_SYNC=true (and DB_SYNC_ALTER=true to alter) when you
+// deliberately want it against a scratch database.
+const shouldSync = process.env.DB_SYNC === 'true';
+const shouldAlter = process.env.DB_SYNC_ALTER === 'true';
 
 let initializing = null;
 
