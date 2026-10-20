@@ -10,9 +10,19 @@ const chatErr = require('../Errors/Chat');
 const room = require('../Socket/RoomManager');
 
 async function isMember(userId , conversationId){
-    conversationId = Number(conversationId);
+    // A missing or non-numeric id used to become NaN, which Sequelize sent to
+    // Postgres as `= NaN`. Postgres rejects that with `column "nan" does not
+    // exist`, so the browser saw a generic 500 instead of a usable error.
+    const id = Number(conversationId);
+    if (!Number.isInteger(id) || id <= 0) {
+        return {
+            status_code : 400,
+            error : 'Đoạn chat không hợp lệ.'
+        }
+    }
+
     const member = await ConverMem.findOne({ 
-        where : {userId , conversationId}
+        where : {userId , conversationId : id}
     });
     if (!member) {
         return {
@@ -28,7 +38,7 @@ async function getMessages(userId , conversationId) {
     if (member.error) return member;
 
     const messages = await Message.findAll({
-        where : { conversationId : conversationId } ,
+        where : { conversationId : Number(conversationId) } ,
         include : [{ model : User , attributes : ['id' , 'username'] }] ,
         order : [['createdAt' , 'ASC']] ,
         limit : 200

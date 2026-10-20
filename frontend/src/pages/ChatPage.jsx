@@ -358,10 +358,16 @@ export default function ChatPage() {
 
   const createChat = async ({ name, type }) => {
     try {
-      await api.createChat({ conversation_name: name, conversation_type: type });
+      const payload = await api.createChat({ conversation_name: name, conversation_type: type });
       setModal(null);
       setError('');
       await loadChats();
+      // Open the chat immediately. Without an id the app would sit on no active
+      // conversation, and any send/delete before the user clicked a chat would
+      // go out with conversationId undefined (backend answered 500).
+      if (Number.isInteger(payload?.id) && payload.id > 0) {
+        openChat(payload.id);
+      }
     } catch (err) {
       setError(err.message);
     }

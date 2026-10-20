@@ -63,7 +63,10 @@ async function createNewChat(userId , username , conversation_name , converstati
     });
 
     return {
-        message : 'A new chat is created sucessfully'
+        message : 'A new chat is created sucessfully',
+        // The frontend needs the id to open the new chat immediately instead of
+        // waiting for the next list refresh and risking a send with no id.
+        id : conversation.id
     };
 }
 

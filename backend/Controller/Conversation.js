@@ -21,7 +21,8 @@ async function createChat(req , res) {
     return res.status(200).json({
         sucess : true , 
         payload : {
-            message : newChat.message
+            message : newChat.message,
+            id : newChat.id
         }
     });
 };
