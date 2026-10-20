@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, resolveMediaUrl } from '../api';
 import { deleteMessageAction } from '../features/messages/deleteMessage';
 import {
   appendMessage,
@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../hooks/useSocket';
 import { useTheme } from '../hooks/useTheme';
 import Sidebar from '../components/Sidebar';
-import MessageList from '../components/MessageList';
+import MessageList, { ImageLightbox } from '../components/MessageList';
 import Composer from '../components/Composer';
 
 const PENDING_SEND_TTL_MS = 30_000;
@@ -259,12 +259,37 @@ export default function ChatPage() {
       alert(data.message || 'Yêu cầu tham gia đoạn chat của bạn đã bị từ chối.');
     };
 
+    const handleChatDeleted = (data) => {
+      loadChats();
+      if (data?.chatId && sameId(data.chatId, activeIdRef.current)) {
+        setActiveId(null);
+        setMessages([]);
+        alert(data.message || 'Đoạn chat này đã bị xoá.');
+      }
+    };
+
+    const handleUserLeft = (data) => {
+      loadChats();
+      if (data?.chatId && sameId(data.chatId, activeIdRef.current)) {
+        setMessages((prev) =>
+          appendMessage(prev, {
+            id: nextTempId(),
+            system: true,
+            content: data.message || 'Một thành viên đã rời khỏi đoạn chat.',
+            createdAt: new Date().toISOString(),
+          })
+        );
+      }
+    };
+
     on('send_message', handleNewMessage);
     on('new_notification', handleNotification);
     on('message_deleted', handleDeleted);
     on('new_join_request', handleJoinRequest);
     on('join_approved', handleJoinApproved);
     on('join_rejected', handleJoinRejected);
+    on('chat_deleted', handleChatDeleted);
+    on('user_left', handleUserLeft);
     return () => {
       off('send_message', handleNewMessage);
       off('new_notification', handleNotification);
@@ -272,6 +297,8 @@ export default function ChatPage() {
       off('new_join_request', handleJoinRequest);
       off('join_approved', handleJoinApproved);
       off('join_rejected', handleJoinRejected);
+      off('chat_deleted', handleChatDeleted);
+      off('user_left', handleUserLeft);
     };
   }, [on, off, loadChats, openChat, user]);
 
@@ -551,6 +578,18 @@ export default function ChatPage() {
                 currentUsername={user?.username}
                 onClose={() => setShowInfo(false)}
                 onMemberUpdated={loadChats}
+                onLeaveChat={async () => {
+                  setActiveId(null);
+                  setMessages([]);
+                  setShowInfo(false);
+                  await loadChats();
+                }}
+                onDeleteChat={async () => {
+                  setActiveId(null);
+                  setMessages([]);
+                  setShowInfo(false);
+                  await loadChats();
+                }}
               />
             </>
           )}
@@ -639,10 +678,23 @@ function JoinChatModal({ onClose, onSubmit }) {
   );
 }
 
-function ChatInfoDrawer({ conversation, senders, currentUsername, onClose, onMemberUpdated }) {
+function ChatInfoDrawer({
+  conversation,
+  senders,
+  currentUsername,
+  onClose,
+  onMemberUpdated,
+  onLeaveChat,
+  onDeleteChat,
+}) {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
+
+  // Shared media state
+  const [sharedMedia, setSharedMedia] = useState([]);
+  const [loadingMedia, setLoadingMedia] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState(null);
 
   const isAdmin = conversation?.userRole === 'admin';
 
@@ -659,9 +711,26 @@ function ChatInfoDrawer({ conversation, senders, currentUsername, onClose, onMem
     }
   }, [isAdmin, conversation?.id]);
 
+  const loadMedia = useCallback(async () => {
+    if (!conversation?.id) return;
+    setLoadingMedia(true);
+    try {
+      const res = await api.getSharedMedia(conversation.id);
+      setSharedMedia(res?.media || []);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingMedia(false);
+    }
+  }, [conversation?.id]);
+
   useEffect(() => {
     loadPending();
   }, [loadPending]);
+
+  useEffect(() => {
+    loadMedia();
+  }, [loadMedia]);
 
   const handleApprove = async (userId) => {
     try {
@@ -687,138 +756,233 @@ function ChatInfoDrawer({ conversation, senders, currentUsername, onClose, onMem
     }
   };
 
+  const handleLeave = async () => {
+    if (!window.confirm(`Bạn có chắc chắn muốn rời khỏi đoạn chat "${conversation.name}"?`)) return;
+    try {
+      await api.leaveChat(conversation.id);
+      alert('Bạn đã rời khỏi đoạn chat thành công.');
+      onLeaveChat?.();
+    } catch (err) {
+      alert(err.message || 'Lỗi khi rời khỏi đoạn chat.');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (
+      !window.confirm(
+        `⚠️ CẢNH BÁO QUẢN TRỊ VIÊN:\nBạn có chắc chắn muốn xoá vĩnh viễn đoạn chat "${conversation.name}"?\nToàn bộ tin nhắn và ảnh sẽ bị xoá vĩnh viễn.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteChat(conversation.id);
+      alert('Đoạn chat đã được xoá thành công.');
+      onDeleteChat?.();
+    } catch (err) {
+      alert(err.message || 'Lỗi khi xoá đoạn chat.');
+    }
+  };
+
   if (!conversation) return null;
   return (
-    <aside className="info-drawer" aria-label="Thông tin đoạn chat">
-      <header className="info-drawer-head">
-        <div>
-          <h3>Thông tin</h3>
-          <p className="info-drawer-sub" style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
-            ID: {conversation.id}
-          </p>
-        </div>
-        <button className="icon-btn" onClick={onClose} title="Đóng" aria-label="Đóng">
-          ✕
-        </button>
-      </header>
-
-      <div className="info-drawer-body">
-        <div className="info-cover">
-          <span className="info-cover-mark">#</span>
-          <span className="info-cover-id" style={{ wordBreak: 'break-all', fontSize: '0.75rem', padding: '0 8px' }}>
-            {conversation.id}
-          </span>
-        </div>
-
-        <div className="info-title">{conversation.name}</div>
-        <div className="info-chips">
-          <span className="chip">{conversation.type}</span>
-          <span className="chip">{conversation.numberMembers} thành viên</span>
-          {isAdmin && <span className="chip" style={{ background: '#3b82f6', color: '#fff' }}>Admin</span>}
-          {conversation.status === 'pending' && <span className="chip warning" style={{ background: '#f59e0b', color: '#fff' }}>Chờ duyệt</span>}
-        </div>
-
-        {actionMsg && (
-          <div style={{ padding: '8px 12px', background: '#ecfdf5', color: '#065f46', borderRadius: 6, fontSize: '0.85rem', marginTop: 10 }}>
-            {actionMsg}
+    <>
+      <aside className="info-drawer" aria-label="Thông tin đoạn chat">
+        <header className="info-drawer-head">
+          <div>
+            <h3>Thông tin</h3>
+            <p className="info-drawer-sub" style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
+              ID: {conversation.id}
+            </p>
           </div>
-        )}
+          <button className="icon-btn" onClick={onClose} title="Đóng" aria-label="Đóng">
+            ✕
+          </button>
+        </header>
 
-        {/* ADMIN SECTION: PENDING REQUESTS */}
-        {isAdmin && (
+        <div className="info-drawer-body">
+          <div className="info-cover">
+            <span className="info-cover-mark">#</span>
+            <span className="info-cover-id" style={{ wordBreak: 'break-all', fontSize: '0.75rem', padding: '0 8px' }}>
+              {conversation.id}
+            </span>
+          </div>
+
+          <div className="info-title">{conversation.name}</div>
+          <div className="info-chips">
+            <span className="chip">{conversation.type}</span>
+            <span className="chip">{conversation.numberMembers} thành viên</span>
+            {isAdmin && <span className="chip" style={{ background: '#3b82f6', color: '#fff' }}>Admin</span>}
+            {conversation.status === 'pending' && <span className="chip warning" style={{ background: '#f59e0b', color: '#fff' }}>Chờ duyệt</span>}
+          </div>
+
+          {actionMsg && (
+            <div style={{ padding: '8px 12px', background: '#ecfdf5', color: '#065f46', borderRadius: 6, fontSize: '0.85rem', marginTop: 10 }}>
+              {actionMsg}
+            </div>
+          )}
+
+          {/* ADMIN SECTION: PENDING REQUESTS */}
+          {isAdmin && (
+            <section className="info-section">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h4>Yêu cầu chờ duyệt ({pendingRequests.length})</h4>
+                <button className="link sm" onClick={loadPending} title="Làm mới">
+                  Tải lại
+                </button>
+              </div>
+              {loadingPending && <p className="muted">Đang kiểm tra...</p>}
+              {!loadingPending && pendingRequests.length === 0 && (
+                <p className="muted" style={{ fontSize: '0.85rem' }}>Không có yêu cầu nào đang chờ</p>
+              )}
+              {!loadingPending && pendingRequests.length > 0 && (
+                <ul className="member-list" style={{ marginTop: 8 }}>
+                  {pendingRequests.map((r) => (
+                    <li key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
+                      <div>
+                        <span className="member-name" style={{ fontWeight: 600 }}>{r.username}</span>
+                        <small className="muted" style={{ display: 'block', fontSize: '0.75rem' }}>{r.email}</small>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="primary sm"
+                          onClick={() => handleApprove(r.userId)}
+                          style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                        >
+                          ✓ Duyệt
+                        </button>
+                        <button
+                          className="ghost sm"
+                          onClick={() => handleReject(r.userId)}
+                          style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {/* SHARED MEDIA SECTION */}
           <section className="info-section">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h4>Yêu cầu chờ duyệt ({pendingRequests.length})</h4>
-              <button className="link sm" onClick={loadPending} title="Làm mới">
+              <h4>Ảnh & Tệp đã gửi ({sharedMedia.length})</h4>
+              <button className="link sm" onClick={loadMedia} title="Làm mới ảnh & tệp">
                 Tải lại
               </button>
             </div>
-            {loadingPending && <p className="muted">Đang kiểm tra...</p>}
-            {!loadingPending && pendingRequests.length === 0 && (
-              <p className="muted" style={{ fontSize: '0.85rem' }}>Không có yêu cầu nào đang chờ</p>
+
+            {loadingMedia && <p className="muted" style={{ fontSize: '0.85rem' }}>Đang tải danh sách ảnh & tệp...</p>}
+
+            {!loadingMedia && sharedMedia.length === 0 && (
+              <p className="muted" style={{ fontSize: '0.85rem' }}>Chưa có ảnh hoặc tệp nào trong đoạn chat này.</p>
             )}
-            {!loadingPending && pendingRequests.length > 0 && (
-              <ul className="member-list" style={{ marginTop: 8 }}>
-                {pendingRequests.map((r) => (
-                  <li key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
-                    <div>
-                      <span className="member-name" style={{ fontWeight: 600 }}>{r.username}</span>
-                      <small className="muted" style={{ display: 'block', fontSize: '0.75rem' }}>{r.email}</small>
+
+            {!loadingMedia && sharedMedia.length > 0 && (
+              <div className="media-grid">
+                {sharedMedia.map((m) => {
+                  const fullUrl = resolveMediaUrl(m.url);
+                  return (
+                    <div
+                      key={m.id}
+                      className="media-grid-item"
+                      onClick={() => setLightboxImg(fullUrl)}
+                      title={m.name || 'Xem ảnh'}
+                    >
+                      <img src={fullUrl} alt={m.name || 'Ảnh đã gửi'} loading="lazy" />
                     </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        className="primary sm"
-                        onClick={() => handleApprove(r.userId)}
-                        style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                      >
-                        ✓ Duyệt
-                      </button>
-                      <button
-                        className="ghost sm"
-                        onClick={() => handleReject(r.userId)}
-                        style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                      >
-                        ✕
-                      </button>
-                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="info-section">
+            <h4>Chi tiết</h4>
+            <dl className="info-list">
+              <div className="info-row">
+                <dt>Chat ID (Mã hoá)</dt>
+                <dd style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
+                  {conversation.id}{' '}
+                  <button
+                    className="link"
+                    onClick={() => {
+                      navigator.clipboard.writeText(conversation.id);
+                      alert('Đã copy Chat ID vào clipboard!');
+                    }}
+                    style={{ fontSize: '0.7rem', marginLeft: 4 }}
+                  >
+                    Copy
+                  </button>
+                </dd>
+              </div>
+              <div className="info-row">
+                <dt>Loại</dt>
+                <dd>{conversation.type}</dd>
+              </div>
+              <div className="info-row">
+                <dt>Số thành viên</dt>
+                <dd>{conversation.numberMembers}</dd>
+              </div>
+              <div className="info-row">
+                <dt>Vai trò của bạn</dt>
+                <dd>{conversation.userRole}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="info-section">
+            <h4>Người đã nhắn</h4>
+            {senders.length === 0 ? (
+              <p className="muted">Chưa có tin nhắn trong lịch sử đã tải</p>
+            ) : (
+              <ul className="member-list">
+                {senders.map((s) => (
+                  <li key={s}>
+                    <span className="member-avatar">{s.charAt(0).toUpperCase()}</span>
+                    <span className="member-name">{s}</span>
+                    {s === currentUsername && <span className="chip sm">bạn</span>}
                   </li>
                 ))}
               </ul>
             )}
           </section>
-        )}
 
-        <section className="info-section">
-          <h4>Chi tiết</h4>
-          <dl className="info-list">
-            <div className="info-row">
-              <dt>Chat ID (Mã hoá)</dt>
-              <dd style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
-                {conversation.id}{' '}
-                <button
-                  className="link"
-                  onClick={() => {
-                    navigator.clipboard.writeText(conversation.id);
-                    alert('Đã copy Chat ID vào clipboard!');
-                  }}
-                  style={{ fontSize: '0.7rem', marginLeft: 4 }}
-                >
-                  Copy
-                </button>
-              </dd>
-            </div>
-            <div className="info-row">
-              <dt>Loại</dt>
-              <dd>{conversation.type}</dd>
-            </div>
-            <div className="info-row">
-              <dt>Số thành viên</dt>
-              <dd>{conversation.numberMembers}</dd>
-            </div>
-            <div className="info-row">
-              <dt>Vai trò của bạn</dt>
-              <dd>{conversation.userRole}</dd>
-            </div>
-          </dl>
-        </section>
+          {/* DANGER / LEAVE CHAT ACTIONS */}
+          <div className="drawer-danger-actions">
+            <button
+              type="button"
+              className="btn-danger-outline"
+              onClick={handleLeave}
+              title="Rời khỏi đoạn chat này"
+            >
+              ← Rời khỏi đoạn chat
+            </button>
 
-        <section className="info-section">
-          <h4>Người đã nhắn</h4>
-          {senders.length === 0 ? (
-            <p className="muted">Chưa có tin nhắn trong lịch sử đã tải</p>
-          ) : (
-            <ul className="member-list">
-              {senders.map((s) => (
-                <li key={s}>
-                  <span className="member-avatar">{s.charAt(0).toUpperCase()}</span>
-                  <span className="member-name">{s}</span>
-                  {s === currentUsername && <span className="chip sm">bạn</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-    </aside>
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn-danger-solid"
+                onClick={handleDelete}
+                title="Xoá vĩnh viễn đoạn chat này"
+              >
+                🗑 Xoá đoạn chat
+              </button>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {lightboxImg && (
+        <ImageLightbox
+          src={lightboxImg}
+          alt="Ảnh phóng to"
+          onClose={() => setLightboxImg(null)}
+        />
+      )}
+    </>
   );
 }

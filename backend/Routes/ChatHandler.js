@@ -13,11 +13,14 @@ router.get('/conversation/:conversationId/pending-requests' , ChatController.get
 router.post('/conversation/:conversationId/approve' , ChatController.approveMember);
 router.post('/conversation/:conversationId/reject' , ChatController.rejectMember);
 router.get('/conversation' , ChatController.getMyChats);
+router.post('/conversation/:conversationId/leave' , MessageController.leaveChat);
+router.delete('/conversation/:conversationId' , MessageController.deleteChat);
 
 // Messages & Media
 router.post('/message/send' , MessageController.sendMessage);
 router.post('/message/upload' , upload.single('image') , MessageController.uploadImage);
 router.delete('/message/delete' , MessageController.deleteMessage);
 router.get('/conversation/:conversationId/messages' , MessageController.getMessages);
+router.get('/conversation/:conversationId/media' , MessageController.getSharedMedia);
 
 module.exports = router;

@@ -184,6 +184,12 @@ export const api = {
     request('POST', `/chat/conversation/${conversationId}/approve`, { targetUserId }),
   rejectMember: (conversationId, targetUserId) =>
     request('POST', `/chat/conversation/${conversationId}/reject`, { targetUserId }),
+  leaveChat: (conversationId) =>
+    request('POST', `/chat/conversation/${conversationId}/leave`, {}),
+  deleteChat: (conversationId) =>
+    request('DELETE', `/chat/conversation/${conversationId}`, {}),
+  getSharedMedia: (conversationId) =>
+    request('GET', `/chat/conversation/${conversationId}/media`),
   myChats: () => request('GET', '/chat/conversation'),
 
   // ---- Messages (HTTP) ----

@@ -5,6 +5,7 @@ const User = require('../Models/User');
 const Conversation = require('../Models/Conversation');
 const ConverMem = require('../Models/ConversationMembers');
 
+const { Op } = require('sequelize');
 const messageErr = require('../Errors/Message');
 const chatErr = require('../Errors/Chat');
 
@@ -236,9 +237,212 @@ async function deleteMessage(senderId , username , conversationId , messageId) {
     return {message : 'Tin nhắn đã được xoá'};
 }
 
+/**
+ * Leave a conversation.
+ * If user is the last approved member, delete the conversation.
+ * If user was the only admin, promote the next oldest approved member.
+ */
+async function leaveChat(userId , username , conversationId) {
+    const member = await isMember(userId , conversationId);
+    if (member.error) return member;
+
+    const conversationRealId = member.realConversationId;
+    const encryptedChatId = member.encryptedChatId;
+
+    const conversation = await Conversation.findByPk(conversationRealId);
+    if (!conversation) {
+        return {
+            status_code : 404 ,
+            error : 'Đoạn chat không tồn tại.'
+        };
+    }
+
+    const totalApproved = await ConverMem.count({
+        where : { conversationId : conversationRealId , status : 'approved' }
+    });
+
+    // If this is the last approved member, clean up conversation entirely
+    if (totalApproved <= 1) {
+        await Message.destroy({ where : { conversationId : conversationRealId } });
+        await Image.destroy({ where : { conversationId : conversationRealId } });
+        await ConverMem.destroy({ where : { conversationId : conversationRealId } });
+        await conversation.destroy();
+
+        room.sendToRoom(conversationRealId , {
+            action : 'chat_deleted' ,
+            message : 'Đoạn chat đã kết thúc vì thành viên cuối cùng đã rời khỏi.' ,
+            chatId : encryptedChatId
+        });
+
+        return {
+            message : 'Bạn đã rời khỏi và đoạn chat đã được đóng.' ,
+            chatId : encryptedChatId ,
+            deleted : true
+        };
+    }
+
+    // If leaving user is admin, promote another member if no other admin remains
+    if (member.userRole === 'admin') {
+        const otherAdmin = await ConverMem.findOne({
+            where : {
+                conversationId : conversationRealId ,
+                status : 'approved' ,
+                userRole : 'admin' ,
+                userId : { [Op.ne] : userId }
+            }
+        });
+
+        if (!otherAdmin) {
+            const nextMember = await ConverMem.findOne({
+                where : {
+                    conversationId : conversationRealId ,
+                    status : 'approved' ,
+                    userId : { [Op.ne] : userId }
+                } ,
+                order : [['createdAt' , 'ASC']]
+            });
+            if (nextMember) {
+                await nextMember.update({ userRole : 'admin' });
+            }
+        }
+    }
+
+    // Remove membership record
+    await member.destroy();
+
+    // Decrement number of members
+    if (conversation.numberMembers > 0) {
+        await conversation.decrement('numberMembers' , { by : 1 });
+    }
+
+    // Broadcast user left
+    room.sendToRoom(conversationRealId , {
+        action : 'user_left' ,
+        message : `${username || 'Thành viên'} đã rời khỏi đoạn chat.` ,
+        userId ,
+        chatId : encryptedChatId
+    });
+
+    return {
+        message : 'Bạn đã rời khỏi đoạn chat thành công.' ,
+        chatId : encryptedChatId ,
+        deleted : false
+    };
+}
+
+/**
+ * Delete a conversation (Admin only).
+ * Cascades removal of messages, images, members, and the conversation record.
+ */
+async function deleteChat(userId , username , conversationId) {
+    const member = await isMember(userId , conversationId);
+    if (member.error) return member;
+
+    if (member.userRole !== 'admin') {
+        return {
+            status_code : 403 ,
+            error : 'Chỉ Quản trị viên mới có quyền xoá đoạn chat này.'
+        };
+    }
+
+    const conversationRealId = member.realConversationId;
+    const encryptedChatId = member.encryptedChatId;
+
+    const conversation = await Conversation.findByPk(conversationRealId);
+    if (!conversation) {
+        return {
+            status_code : 404 ,
+            error : 'Đoạn chat không tồn tại.'
+        };
+    }
+
+    const chatName = conversation.name;
+
+    // Broadcast deletion to all users in the room
+    room.sendToRoom(conversationRealId , {
+        action : 'chat_deleted' ,
+        message : `Đoạn chat "${chatName}" đã bị Quản trị viên ${username} xoá.` ,
+        chatId : encryptedChatId
+    });
+
+    // Delete all related records
+    await Message.destroy({ where : { conversationId : conversationRealId } });
+    await Image.destroy({ where : { conversationId : conversationRealId } });
+    await ConverMem.destroy({ where : { conversationId : conversationRealId } });
+    await conversation.destroy();
+
+    return {
+        message : 'Đoạn chat đã được xoá thành công.' ,
+        chatId : encryptedChatId
+    };
+}
+
+/**
+ * Get shared images and files for a conversation.
+ */
+async function getSharedMedia(userId , conversationId) {
+    const member = await isMember(userId , conversationId);
+    if (member.error) return member;
+
+    const conversationRealId = member.realConversationId;
+
+    const imageRows = await Image.findAll({
+        where : { conversationId : conversationRealId } ,
+        order : [['createdAt' , 'DESC']] ,
+        limit : 100
+    });
+
+    const imageMessages = await Message.findAll({
+        where : { conversationId : conversationRealId , type : 'image' } ,
+        include : [{ model : User , attributes : ['id' , 'username'] }] ,
+        order : [['createdAt' , 'DESC']] ,
+        limit : 100
+    });
+
+    const seenUrls = new Set();
+    const media = [];
+
+    for (const img of imageRows) {
+        if (img.url && !seenUrls.has(img.url)) {
+            seenUrls.add(img.url);
+            media.push({
+                id : img.id ,
+                url : img.url ,
+                name : img.originalName || 'Hình ảnh' ,
+                mimetype : img.mimetype || 'image/jpeg' ,
+                size : img.size || null ,
+                createdAt : img.createdAt
+            });
+        }
+    }
+
+    for (const msg of imageMessages) {
+        if (msg.content && !seenUrls.has(msg.content)) {
+            seenUrls.add(msg.content);
+            media.push({
+                id : `msg-${msg.id}` ,
+                url : msg.content ,
+                name : 'Hình ảnh' ,
+                mimetype : 'image/jpeg' ,
+                size : null ,
+                senderName : msg.User ? msg.User.username : null ,
+                createdAt : msg.createdAt
+            });
+        }
+    }
+
+    return {
+        chatId : member.encryptedChatId ,
+        media
+    };
+}
+
 module.exports = {
     sendMessage , 
     sendImageMessage ,
     deleteMessage ,
-    getMessages
-}
+    getMessages ,
+    leaveChat ,
+    deleteChat ,
+    getSharedMedia
+};

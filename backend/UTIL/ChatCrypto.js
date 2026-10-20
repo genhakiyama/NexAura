@@ -17,7 +17,8 @@ function encryptChatId(id) {
     const num = Number(id);
     if (!Number.isInteger(num) || num <= 0) return null;
 
-    const iv = crypto.randomBytes(12);
+    // Deterministic 12-byte IV for the same conversation ID so activeId and sidebar keys remain stable across polling
+    const iv = crypto.createHmac('sha256', CIPHER_KEY).update(`conv_${num}`).digest().subarray(0, 12);
     const cipher = crypto.createCipheriv('aes-256-gcm', CIPHER_KEY, iv);
     const encrypted = Buffer.concat([cipher.update(String(num), 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();

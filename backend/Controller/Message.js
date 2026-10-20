@@ -117,9 +117,68 @@ async function getMessages(req , res) {
     });
 }
 
+async function leaveChat(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const { conversationId } = req.params;
+
+    const result = await MessageService.leaveChat(userId , username , conversationId);
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : { error : result.error }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
+async function deleteChat(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const { conversationId } = req.params;
+
+    const result = await MessageService.deleteChat(userId , username , conversationId);
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : { error : result.error }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
+async function getSharedMedia(req , res) {
+    const userId = req.userId;
+    const { conversationId } = req.params;
+
+    const result = await MessageService.getSharedMedia(userId , conversationId);
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : { error : result.error }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
 module.exports = {
     sendMessage , 
     uploadImage ,
     deleteMessage ,
-    getMessages
+    getMessages ,
+    leaveChat ,
+    deleteChat ,
+    getSharedMedia
 };

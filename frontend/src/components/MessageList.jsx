@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { resolveMediaUrl } from '../api';
 
 function formatTime(ts) {
@@ -8,21 +9,60 @@ function formatTime(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function ImageLightbox({ src, alt, onClose }) {
+export function ImageLightbox({ src, alt, onClose }) {
   // Close on Escape
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  return (
-    <div className="lightbox-backdrop" onClick={onClose}>
+  if (!src) return null;
+
+  return createPortal(
+    <div
+      className="lightbox-backdrop"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }}
+    >
       <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-        <img src={src} alt={alt} />
-        <button className="lightbox-close" onClick={onClose} title="Đóng" aria-label="Đóng">✕</button>
+        <img src={src} alt={alt || 'Ảnh'} />
+        <div className="lightbox-toolbar">
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="lightbox-action-btn"
+            title="Mở trong tab mới"
+            onClick={(e) => e.stopPropagation()}
+          >
+            ↗ Tab mới
+          </a>
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            title="Đóng (Esc)"
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -40,7 +80,7 @@ export default function MessageList({ messages, currentUserId, currentUsername }
   if (messages.length === 0) {
     return (
       <div className="messages">
-        <div className="empty-state">Chọn một đoạn chat để bắt đầu</div>
+        <div className="empty-state">Chưa có tin nhắn nào trong cuộc trò chuyện này. Hãy gửi tin nhắn đầu tiên!</div>
       </div>
     );
   }
@@ -72,7 +112,11 @@ export default function MessageList({ messages, currentUserId, currentUsername }
                   src={resolveMediaUrl(m.content)}
                   alt="Ảnh"
                   loading="lazy"
-                  onClick={() => openLightbox(resolveMediaUrl(m.content))}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openLightbox(resolveMediaUrl(m.content));
+                  }}
                 />
               ) : (
                 m.content
