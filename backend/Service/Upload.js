@@ -30,12 +30,36 @@ async function uploadImage(file, conversationId) {
     const storagePath = `conv-${conversationId}/${Date.now()}.${ext}`;
 
     // Upload to Supabase Storage
-    const { data, error } = await supabase.storage
+    let { data, error } = await supabase.storage
         .from(BUCKET_NAME)
         .upload(storagePath, file.buffer, {
             contentType: file.mimetype || 'image/png',
             upsert: false
         });
+
+    // Nếu gặp lỗi Bucket not found, tự động khởi tạo bucket "chat-images" (PUBLIC) và thử lại
+    if (error && (error.message?.includes('not found') || error.error === 'Bucket not found' || error.statusCode === '404' || error.statusCode === 404)) {
+        console.warn(`[Supabase Storage] Bucket "${BUCKET_NAME}" chưa tồn tại. Đang tự động tạo...`);
+        const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
+            public: true,
+            fileSizeLimit: 4 * 1024 * 1024,
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        });
+
+        if (!createError || createError.message?.includes('already exists')) {
+            console.log(`[Supabase Storage] Đã tự động tạo bucket "${BUCKET_NAME}" thành công! Đang thử tải lại...`);
+            const retry = await supabase.storage
+                .from(BUCKET_NAME)
+                .upload(storagePath, file.buffer, {
+                    contentType: file.mimetype || 'image/png',
+                    upsert: false
+                });
+            data = retry.data;
+            error = retry.error;
+        } else {
+            console.error('[Supabase Storage] Tự động tạo bucket thất bại:', createError);
+        }
+    }
 
     if (error) {
         console.error('[Supabase Storage Upload Error]:', {
