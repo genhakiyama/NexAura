@@ -36,6 +36,8 @@ export default function Sidebar({
             <span className="chat-name">{c.name}</span>
             <span className="chat-meta">
               {c.type} · {c.numberMembers} thành viên
+              {c.status === 'pending' && <span className="chip sm warning" style={{ marginLeft: 6, color: '#f59e0b' }}>Chờ duyệt</span>}
+              {c.userRole === 'admin' && <span className="chip sm" style={{ marginLeft: 6 }}>Admin</span>}
             </span>
           </li>
         ))}

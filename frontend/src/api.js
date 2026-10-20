@@ -176,6 +176,14 @@ export const api = {
     request('POST', '/chat/conversation/create', { conversation_name, conversation_type }),
   joinChat: (conversationId) =>
     request('POST', `/chat/conversation/join/${conversationId}`, {}),
+  requestJoinChat: (conversationId) =>
+    request('POST', `/chat/conversation/request-join/${conversationId}`, {}),
+  getPendingRequests: (conversationId) =>
+    request('GET', `/chat/conversation/${conversationId}/pending-requests`),
+  approveMember: (conversationId, targetUserId) =>
+    request('POST', `/chat/conversation/${conversationId}/approve`, { targetUserId }),
+  rejectMember: (conversationId, targetUserId) =>
+    request('POST', `/chat/conversation/${conversationId}/reject`, { targetUserId }),
   myChats: () => request('GET', '/chat/conversation'),
 
   // ---- Messages (HTTP) ----

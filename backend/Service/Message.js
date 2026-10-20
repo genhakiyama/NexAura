@@ -10,13 +10,11 @@ const chatErr = require('../Errors/Chat');
 
 const room = require('../Socket/RoomManager');
 const { uploadImage } = require('./Upload');
+const { encryptChatId, decryptChatId } = require('../UTIL/ChatCrypto');
 
 async function isMember(userId , conversationId){
-    // A missing or non-numeric id used to become NaN, which Sequelize sent to
-    // Postgres as `= NaN`. Postgres rejects that with `column "nan" does not
-    // exist`, so the browser saw a generic 500 instead of a usable error.
-    const id = Number(conversationId);
-    if (!Number.isInteger(id) || id <= 0) {
+    const id = decryptChatId(conversationId);
+    if (!id) {
         return {
             status_code : 400,
             error : 'Đoạn chat không hợp lệ.'
@@ -28,19 +26,37 @@ async function isMember(userId , conversationId){
     });
     if (!member) {
         return {
-            status_code : chatErr.UserActionRestrictedError.defaultStatusCode , 
-            error : chatErr.UserActionRestrictedError.defaultMessage
+            status_code : 403 , 
+            error : 'Bạn không phải là thành viên của đoạn chat này.'
         }
     }
+
+    if (member.status === 'pending') {
+        return {
+            status_code : 403 ,
+            error : 'Yêu cầu tham gia của bạn đang chờ Quản trị viên phê duyệt.'
+        };
+    }
+
+    if (member.status !== 'approved') {
+        return {
+            status_code : 403 ,
+            error : 'Bạn không có quyền truy cập đoạn chat này.'
+        };
+    }
+
+    member.realConversationId = id;
+    member.encryptedChatId = encryptChatId(id);
     return member;
 }
 
 async function getMessages(userId , conversationId) {
     const member = await isMember(userId, conversationId);
     if (member.error) return member;
+    const id = member.realConversationId;
 
     const messages = await Message.findAll({
-        where : { conversationId : Number(conversationId) } ,
+        where : { conversationId : id } ,
         include : [{ model : User , attributes : ['id' , 'username'] }] ,
         order : [['createdAt' , 'ASC']] ,
         limit : 200
@@ -80,7 +96,8 @@ async function sendMessage(senderId , username , type , conversationId , content
     const member = await isMember(senderId, conversationId);
     if (member.error) return member;
 
-    const id = Number(conversationId);
+    const id = member.realConversationId;
+    const encryptedId = member.encryptedChatId;
 
     const message = await Message.create({
         type , status : 'sent' , content : text ,
@@ -93,7 +110,7 @@ async function sendMessage(senderId , username , type , conversationId , content
         from : username , 
         message : text ,
         type ,
-        chatId : id,
+        chatId : encryptedId,
         createdAt: message.createdAt
     });
 
@@ -121,7 +138,8 @@ async function sendImageMessage(senderId , username , conversationId , file) {
     const member = await isMember(senderId , conversationId);
     if (member.error) return member;
 
-    const id = Number(conversationId);
+    const id = member.realConversationId;
+    const encryptedId = member.encryptedChatId;
 
     // Upload to Supabase Storage and get the public URL
     let uploadResult;
@@ -165,7 +183,7 @@ async function sendImageMessage(senderId , username , conversationId , file) {
         from : username ,
         message : imageUrl ,
         type : 'image' ,
-        chatId : id ,
+        chatId : encryptedId ,
         createdAt : message.createdAt
     });
 
@@ -179,6 +197,8 @@ async function sendImageMessage(senderId , username , conversationId , file) {
 async function deleteMessage(senderId , username , conversationId , messageId) {
     const member = await isMember(senderId , conversationId);
     if (member.error) return member;
+    const conversationRealId = member.realConversationId;
+    const encryptedChatId = member.encryptedChatId;
 
     // A non-numeric messageId (a temp client id, or a malformed request) used to
     // reach Postgres as-is and raise a 500. Reject it as a normal 404 instead.
@@ -212,7 +232,7 @@ async function deleteMessage(senderId , username , conversationId , messageId) {
 
     // io.to(room) so every client in the room — including the one that deleted —
     // drops the message without reloading.
-    room.sendDeletedRoom(Number(conversationId) , {id , chatId : Number(conversationId)});
+    room.sendDeletedRoom(conversationRealId , { id , chatId : encryptedChatId });
     return {message : 'Tin nhắn đã được xoá'};
 }
 

@@ -241,15 +241,39 @@ export default function ChatPage() {
       setMessages((prev) => removeMessage(prev, id).list);
     };
 
+    const handleJoinRequest = (data) => {
+      loadChats();
+      if (data?.username) {
+        alert(`[Quản trị viên] ${data.username} vừa gửi yêu cầu tham gia đoạn chat "${data.conversationName || ''}".`);
+      }
+    };
+
+    const handleJoinApproved = (data) => {
+      loadChats();
+      if (data?.chatId) openChat(data.chatId);
+      alert(data.message || 'Yêu cầu tham gia đoạn chat của bạn đã được phê duyệt!');
+    };
+
+    const handleJoinRejected = (data) => {
+      loadChats();
+      alert(data.message || 'Yêu cầu tham gia đoạn chat của bạn đã bị từ chối.');
+    };
+
     on('send_message', handleNewMessage);
     on('new_notification', handleNotification);
     on('message_deleted', handleDeleted);
+    on('new_join_request', handleJoinRequest);
+    on('join_approved', handleJoinApproved);
+    on('join_rejected', handleJoinRejected);
     return () => {
       off('send_message', handleNewMessage);
       off('new_notification', handleNotification);
       off('message_deleted', handleDeleted);
+      off('new_join_request', handleJoinRequest);
+      off('join_approved', handleJoinApproved);
+      off('join_rejected', handleJoinRejected);
     };
-  }, [on, off, loadChats, user]);
+  }, [on, off, loadChats, openChat, user]);
 
   // ---- Send message over HTTP; server broadcasts to the socket room ----
   const handleSend = async (content) => {
@@ -392,10 +416,7 @@ export default function ChatPage() {
       setModal(null);
       setError('');
       await loadChats();
-      // Open the chat immediately. Without an id the app would sit on no active
-      // conversation, and any send/delete before the user clicked a chat would
-      // go out with conversationId undefined (backend answered 500).
-      if (Number.isInteger(payload?.id) && payload.id > 0) {
+      if (payload?.id) {
         openChat(payload.id);
       }
     } catch (err) {
@@ -405,11 +426,15 @@ export default function ChatPage() {
 
   const joinChat = async (id) => {
     try {
-      await api.joinChat(id);
+      const res = await api.joinChat(id);
       setModal(null);
       setError('');
       await loadChats();
-      openChat(Number(id));
+      if (res?.status === 'approved') {
+        openChat(res?.chatId || id);
+      } else {
+        alert(res?.message || 'Yêu cầu tham gia đã được gửi tới Quản trị viên để phê duyệt.');
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -490,12 +515,31 @@ export default function ChatPage() {
 
         <div className="chat-body">
           <div className="chat-main">
+            {activeConversation?.status === 'pending' && (
+              <div
+                className="alert warning banner"
+                style={{
+                  marginBottom: 12,
+                  backgroundColor: '#fffbeb',
+                  color: '#b45309',
+                  border: '1px solid #fde68a',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                }}
+              >
+                ⏳ <strong>Chờ duyệt:</strong> Yêu cầu tham gia đoạn chat này của bạn đang chờ Quản trị viên phê duyệt. Bạn chưa thể xem hoặc gửi tin nhắn.
+              </div>
+            )}
             <MessageList
               messages={messagesWithDelete}
               currentUserId={user?.userId}
               currentUsername={user?.username}
             />
-            <Composer disabled={!activeId} onSend={handleSend} onImageUpload={handleImageUpload} />
+            <Composer
+              disabled={!activeId || activeConversation?.status === 'pending'}
+              onSend={handleSend}
+              onImageUpload={handleImageUpload}
+            />
           </div>
 
           {showInfo && activeId && (
@@ -506,6 +550,7 @@ export default function ChatPage() {
                 senders={historySenders}
                 currentUsername={user?.username}
                 onClose={() => setShowInfo(false)}
+                onMemberUpdated={loadChats}
               />
             </>
           )}
@@ -571,12 +616,11 @@ function JoinChatModal({ onClose, onSubmit }) {
           }}
         >
           <label>
-            ID đoạn chat
+            Mã đoạn chat (Chat ID mã hoá)
             <input
               value={id}
               onChange={(e) => setId(e.target.value)}
-              inputMode="numeric"
-              placeholder="vd: 1"
+              placeholder="Dán mã đoạn chat vào đây (vd: c_...)"
               required
               autoFocus
             />
@@ -586,7 +630,7 @@ function JoinChatModal({ onClose, onSubmit }) {
               Huỷ
             </button>
             <button type="submit" className="primary">
-              Tham gia
+              Gửi yêu cầu tham gia
             </button>
           </div>
         </form>
@@ -595,14 +639,63 @@ function JoinChatModal({ onClose, onSubmit }) {
   );
 }
 
-function ChatInfoDrawer({ conversation, senders, currentUsername, onClose }) {
+function ChatInfoDrawer({ conversation, senders, currentUsername, onClose, onMemberUpdated }) {
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+
+  const isAdmin = conversation?.userRole === 'admin';
+
+  const loadPending = useCallback(async () => {
+    if (!isAdmin || !conversation?.id) return;
+    setLoadingPending(true);
+    try {
+      const res = await api.getPendingRequests(conversation.id);
+      setPendingRequests(res?.pendingRequests || []);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingPending(false);
+    }
+  }, [isAdmin, conversation?.id]);
+
+  useEffect(() => {
+    loadPending();
+  }, [loadPending]);
+
+  const handleApprove = async (userId) => {
+    try {
+      await api.approveMember(conversation.id, userId);
+      setPendingRequests((prev) => prev.filter((r) => r.userId !== userId));
+      setActionMsg('Đã duyệt thành viên!');
+      setTimeout(() => setActionMsg(''), 3000);
+      onMemberUpdated?.();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleReject = async (userId) => {
+    try {
+      await api.rejectMember(conversation.id, userId);
+      setPendingRequests((prev) => prev.filter((r) => r.userId !== userId));
+      setActionMsg('Đã từ chối yêu cầu.');
+      setTimeout(() => setActionMsg(''), 3000);
+      onMemberUpdated?.();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   if (!conversation) return null;
   return (
     <aside className="info-drawer" aria-label="Thông tin đoạn chat">
       <header className="info-drawer-head">
         <div>
           <h3>Thông tin</h3>
-          <p className="info-drawer-sub">#{conversation.id}</p>
+          <p className="info-drawer-sub" style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
+            ID: {conversation.id}
+          </p>
         </div>
         <button className="icon-btn" onClick={onClose} title="Đóng" aria-label="Đóng">
           ✕
@@ -612,21 +705,87 @@ function ChatInfoDrawer({ conversation, senders, currentUsername, onClose }) {
       <div className="info-drawer-body">
         <div className="info-cover">
           <span className="info-cover-mark">#</span>
-          <span className="info-cover-id">{conversation.id}</span>
+          <span className="info-cover-id" style={{ wordBreak: 'break-all', fontSize: '0.75rem', padding: '0 8px' }}>
+            {conversation.id}
+          </span>
         </div>
 
         <div className="info-title">{conversation.name}</div>
         <div className="info-chips">
           <span className="chip">{conversation.type}</span>
           <span className="chip">{conversation.numberMembers} thành viên</span>
+          {isAdmin && <span className="chip" style={{ background: '#3b82f6', color: '#fff' }}>Admin</span>}
+          {conversation.status === 'pending' && <span className="chip warning" style={{ background: '#f59e0b', color: '#fff' }}>Chờ duyệt</span>}
         </div>
+
+        {actionMsg && (
+          <div style={{ padding: '8px 12px', background: '#ecfdf5', color: '#065f46', borderRadius: 6, fontSize: '0.85rem', marginTop: 10 }}>
+            {actionMsg}
+          </div>
+        )}
+
+        {/* ADMIN SECTION: PENDING REQUESTS */}
+        {isAdmin && (
+          <section className="info-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4>Yêu cầu chờ duyệt ({pendingRequests.length})</h4>
+              <button className="link sm" onClick={loadPending} title="Làm mới">
+                Tải lại
+              </button>
+            </div>
+            {loadingPending && <p className="muted">Đang kiểm tra...</p>}
+            {!loadingPending && pendingRequests.length === 0 && (
+              <p className="muted" style={{ fontSize: '0.85rem' }}>Không có yêu cầu nào đang chờ</p>
+            )}
+            {!loadingPending && pendingRequests.length > 0 && (
+              <ul className="member-list" style={{ marginTop: 8 }}>
+                {pendingRequests.map((r) => (
+                  <li key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
+                    <div>
+                      <span className="member-name" style={{ fontWeight: 600 }}>{r.username}</span>
+                      <small className="muted" style={{ display: 'block', fontSize: '0.75rem' }}>{r.email}</small>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        className="primary sm"
+                        onClick={() => handleApprove(r.userId)}
+                        style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                      >
+                        ✓ Duyệt
+                      </button>
+                      <button
+                        className="ghost sm"
+                        onClick={() => handleReject(r.userId)}
+                        style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
 
         <section className="info-section">
           <h4>Chi tiết</h4>
           <dl className="info-list">
             <div className="info-row">
-              <dt>Chat ID</dt>
-              <dd>#{conversation.id}</dd>
+              <dt>Chat ID (Mã hoá)</dt>
+              <dd style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>
+                {conversation.id}{' '}
+                <button
+                  className="link"
+                  onClick={() => {
+                    navigator.clipboard.writeText(conversation.id);
+                    alert('Đã copy Chat ID vào clipboard!');
+                  }}
+                  style={{ fontSize: '0.7rem', marginLeft: 4 }}
+                >
+                  Copy
+                </button>
+              </dd>
             </div>
             <div className="info-row">
               <dt>Loại</dt>

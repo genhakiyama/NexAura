@@ -41,9 +41,18 @@ async function sendDeletedRoom(conversationId , payload) {
     }
 }
 
+async function sendToUser(userId , event , payload) {
+    try {
+        getIO().to(`user:${userId}`).emit(event , payload);
+    } catch (err) {
+        console.error('[socket] sendToUser failed:' , err.message);
+    }
+}
+
 module.exports = {
     joinRoom , 
     notifcationToRoom  ,
     sendToRoom , 
-    sendDeletedRoom
+    sendDeletedRoom ,
+    sendToUser
 }

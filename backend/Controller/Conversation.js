@@ -11,7 +11,7 @@ async function createChat(req , res) {
 
     if (newChat.error) {
         return res.status(newChat.status_code).json({
-            sucess : false , 
+            success : false , 
             payload : {
                 error : newChat.error
             }
@@ -19,13 +19,13 @@ async function createChat(req , res) {
     }
 
     return res.status(200).json({
-        sucess : true , 
+        success : true , 
         payload : {
             message : newChat.message,
             id : newChat.id
         }
     });
-};
+}
 
 async function joinChat(req , res) {
     const userId = req.userId;
@@ -35,19 +35,122 @@ async function joinChat(req , res) {
     const isJoin = await chatService.joinChat(username , userId , conversationId);
 
     if (isJoin.error) {
-        return res.status(isJoin.status_code).json({
-            sucess : false ,
+        return res.status(isJoin.status_code || 400).json({
+            success : false ,
             payload : {
                 error : isJoin.error
             }
         });
     }
 
-    return res.status(200).json({
-        sucess : true , 
+    return res.status(isJoin.status_code || 200).json({
+        success : true , 
         payload : {
-            message : isJoin.message
+            message : isJoin.message,
+            status : isJoin.status,
+            chatId : isJoin.chatId
         }
+    });
+}
+
+async function requestJoin(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const {conversationId} = req.params;
+
+    const result = await chatService.requestJoinChat(username , userId , conversationId);
+
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : {
+                error : result.error
+            }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
+async function getPendingRequests(req , res) {
+    const adminUserId = req.userId;
+    const {conversationId} = req.params;
+
+    const result = await chatService.getPendingRequests(adminUserId , conversationId);
+
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : {
+                error : result.error
+            }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
+async function approveMember(req , res) {
+    const adminUserId = req.userId;
+    const {conversationId} = req.params;
+    const {targetUserId} = req.body;
+
+    if (!targetUserId) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'targetUserId is required' }
+        });
+    }
+
+    const result = await chatService.approveMember(adminUserId , conversationId , Number(targetUserId));
+
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : {
+                error : result.error
+            }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
+    });
+}
+
+async function rejectMember(req , res) {
+    const adminUserId = req.userId;
+    const {conversationId} = req.params;
+    const {targetUserId} = req.body;
+
+    if (!targetUserId) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'targetUserId is required' }
+        });
+    }
+
+    const result = await chatService.rejectMember(adminUserId , conversationId , Number(targetUserId));
+
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : {
+                error : result.error
+            }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : result
     });
 }
 
@@ -58,7 +161,7 @@ async function getMyChats(req , res) {
 
     if (myChats.error) {
         return res.status(myChats.status_code).json({
-            sucess : false ,
+            success : false ,
             payload : {
                 error : myChats.error
             }
@@ -66,7 +169,7 @@ async function getMyChats(req , res) {
     }
 
     return res.status(200).json({
-        sucess : true ,
+        success : true ,
         payload : {
             conversations : myChats.conversations
         }
@@ -76,5 +179,9 @@ async function getMyChats(req , res) {
 module.exports = {
     createChat , 
     joinChat ,
+    requestJoin ,
+    getPendingRequests ,
+    approveMember ,
+    rejectMember ,
     getMyChats
-}
+};
