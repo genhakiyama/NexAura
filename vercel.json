@@ -25,12 +25,10 @@
       "destination": { "service": "backend" }
     },
     {
-      "comment": "Socket.IO handshake and long-polling. Without this the catch-all below sends /socket.io to the frontend service, which answers with index.html and the client reports a network error.",
       "source": "/socket.io/(.*)",
       "destination": { "service": "backend" }
     },
     {
-      "comment": "Bare /socket.io (no trailing slash) also has to reach the backend.",
       "source": "/socket.io",
       "destination": { "service": "backend" }
     },
