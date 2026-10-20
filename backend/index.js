@@ -9,6 +9,16 @@
 // WebSocket is pinned to one function instance and is capped at 300s on Hobby.
 const path = require('path');
 
+// Vercel's Express builder only accepts an entrypoint whose own source imports
+// `express` (see packages/express/src/build.ts in vercel/vercel). This file
+// builds the app in ./Server/app, so without its own `express` import the
+// builder skips it and emits an empty index.cjs, producing:
+//   "No exports found in module /var/task/backend/index.cjs"
+// The import is intentionally unused; it exists only so the builder treats this
+// file as the Express entrypoint. The app itself is still built in ./Server/app.
+const express = require('express');
+void express;
+
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = require('./Server/app');
