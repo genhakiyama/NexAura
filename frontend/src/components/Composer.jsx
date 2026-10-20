@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 export default function Composer({ disabled, onSend, onImageUpload }) {

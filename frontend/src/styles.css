@@ -819,11 +819,13 @@ select {
   to   { opacity: 1; transform: none; }
 }
 .image-preview img {
-  max-width: 200px;
-  max-height: 140px;
+  width: 140px;
+  height: 105px;
+  aspect-ratio: 4 / 3;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   object-fit: cover;
+  object-position: center;
   box-shadow: var(--shadow-sm);
 }
 .image-preview-actions {
@@ -833,26 +835,35 @@ select {
 }
 
 /* ============================================================
-   Image inside message bubble
+   Image inside message bubble — Uniform 4:3 Aspect Ratio Card
    ============================================================ */
 .msg-image {
   display: block;
-  max-width: 280px;
-  max-height: 280px;
-  border-radius: var(--radius);
+  width: 260px;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
   object-fit: cover;
+  object-position: center;
   cursor: pointer;
-  transition: filter 0.15s ease, transform 0.1s ease;
+  background-color: rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  transition: filter 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 .msg-image:hover {
-  filter: brightness(1.05);
-  transform: scale(1.02);
+  filter: brightness(1.03);
+  transform: scale(1.015);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
 }
 /* Remove text padding from image bubbles */
+.msg-bubble-image,
 .msg-bubble:has(.msg-image) {
-  padding: 4px;
+  padding: 0 !important;
   background: transparent !important;
-  box-shadow: none;
+  box-shadow: none !important;
+  border: none !important;
+  overflow: hidden;
+  border-radius: 14px;
 }
 
 /* ============================================================

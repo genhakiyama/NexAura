@@ -65,7 +65,7 @@ export default function MessageList({ messages, currentUserId, currentUsername }
         return (
           <div key={m.id} className={mine ? 'msg mine' : 'msg'}>
             {!mine && <div className="msg-sender">{m.senderName}</div>}
-            <div className="msg-bubble">
+            <div className={isImage ? "msg-bubble msg-bubble-image" : "msg-bubble"}>
               {isImage ? (
                 <img
                   className="msg-image"
