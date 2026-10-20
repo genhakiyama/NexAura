@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const Sequelize = require('sequelize');
 
 // Sequelize lazy-loads pg with a dynamic require. That makes the Vercel
@@ -7,14 +8,18 @@ const Sequelize = require('sequelize');
 // deployed bundle.
 const pg = require('pg');
 
-if (!process.env.SUPABASE_URL) {
-    // new Sequelize(undefined) dies with a cryptic TypeError at import time;
-    // fail with the actual missing variable instead.
-    throw new Error('[db] SUPABASE_URL environment variable is required');
+const dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL || '').trim();
+
+if (!dbUrl) {
+    throw new Error('[db] Cần biến môi trường kết nối database (SUPABASE_URL hoặc DATABASE_URL dạng postgresql://...)');
+}
+
+if (dbUrl.startsWith('https://') || dbUrl.startsWith('http://')) {
+    throw new Error('[db] LỖI CẤU HÌNH: Biến SUPABASE_URL của bạn đang chứa link website (https://...). Biến này dùng để kết nối Database PostgreSQL nên bắt buộc phải là chuỗi connection string dạng "postgresql://postgres.[ref]:[password]@...:5432/postgres". Để cấu hình link web Supabase cho Storage, hãy dùng biến riêng SUPABASE_PROJECT_URL.');
 }
 
 const sequelize = new Sequelize(
-    process.env.SUPABASE_URL , 
+    dbUrl , 
     {
         dialect: 'postgres',
         dialectModule: pg,
