@@ -16,6 +16,14 @@ async function main() {
         process.exit(1);
     }
 
+    if (!SERVICE_KEY || !SERVICE_KEY.startsWith('ey')) {
+        console.error('❌  SUPABASE_SERVICE_ROLE_KEY không đúng định dạng JWT!');
+        console.error('    Key hiện tại bắt đầu bằng: ' + (SERVICE_KEY.slice(0, 10) || '(trống)'));
+        console.error('    Key này là CLI Personal Access Token, không phải service_role JWT key.');
+        console.error('    👉 Vui lòng vào Supabase Dashboard > Project Settings > API > Project API keys > copy "service_role" (secret) bắt đầu bằng "eyJhbGciOi...".');
+        process.exit(1);
+    }
+
     console.log(`Storage base: ${STORAGE_BASE}`);
     console.log('Creating bucket "chat-images"...\n');
 

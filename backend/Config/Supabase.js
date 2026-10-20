@@ -23,6 +23,8 @@ if (!PROJECT_REF) {
 }
 if (!SERVICE_KEY) {
     console.warn('[supabase] SUPABASE_SERVICE_ROLE_KEY is missing');
+} else if (!SERVICE_KEY.startsWith('ey')) {
+    console.warn('[supabase] CẢNH BÁO: SUPABASE_SERVICE_ROLE_KEY phải là chuỗi JWT (bắt đầu bằng eyJ...). Key hiện tại (sb_secret_...) là CLI Personal Access Token, không dùng được cho Storage API.');
 }
 
 const STORAGE_BASE = PROJECT_REF
@@ -41,7 +43,10 @@ const BUCKET = 'chat-images';
  */
 async function uploadToStorage(buffer, fileName, contentType) {
     if (!STORAGE_BASE) {
-        throw new Error('Supabase Storage is not configured (missing project ref).');
+        throw new Error('Supabase Storage chưa được cấu hình (thiếu project ref trong SUPABASE_URL).');
+    }
+    if (!SERVICE_KEY || !SERVICE_KEY.startsWith('ey')) {
+        throw new Error('SUPABASE_SERVICE_ROLE_KEY không hợp lệ hoặc sai định dạng. Cần chuỗi JWT bắt đầu bằng eyJ... từ Supabase Dashboard > Project Settings > API.');
     }
 
     const url = `${STORAGE_BASE}/object/${BUCKET}/${fileName}`;

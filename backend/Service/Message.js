@@ -123,9 +123,18 @@ async function sendImageMessage(senderId , username , conversationId , file) {
     const id = Number(conversationId);
 
     // Upload to Supabase Storage and get the public URL
-    const imageUrl = await uploadImage(
-        file.buffer , file.originalname , file.mimetype , id
-    );
+    let imageUrl;
+    try {
+        imageUrl = await uploadImage(
+            file.buffer , file.originalname , file.mimetype , id
+        );
+    } catch (err) {
+        console.error('[sendImageMessage] upload error:' , err.message);
+        return {
+            status_code : 500 ,
+            error : `Lỗi lưu trữ ảnh: ${err.message}`
+        };
+    }
 
     const message = await Message.create({
         type : 'image' ,

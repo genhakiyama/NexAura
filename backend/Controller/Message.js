@@ -40,25 +40,33 @@ async function uploadImage(req , res) {
         });
     }
 
-    const result = await MessageService.sendImageMessage(
-        userId , username , conversationId , req.file
-    );
+    try {
+        const result = await MessageService.sendImageMessage(
+            userId , username , conversationId , req.file
+        );
 
-    if (result.error) {
-        return res.status(result.status_code).json({
+        if (result.error) {
+            return res.status(result.status_code || 400).json({
+                success : false ,
+                payload : { error : result.error }
+            });
+        }
+
+        return res.status(200).json({
+            success : true ,
+            payload : {
+                message : result.message ,
+                messageId : result.messageId ,
+                imageUrl : result.imageUrl
+            }
+        });
+    } catch (err) {
+        console.error('[uploadImage controller]' , err);
+        return res.status(500).json({
             success : false ,
-            payload : { error : result.error }
+            payload : { error : err.message || 'Lỗi gửi ảnh.' }
         });
     }
-
-    return res.status(200).json({
-        success : true ,
-        payload : {
-            message : result.message ,
-            messageId : result.messageId ,
-            imageUrl : result.imageUrl
-        }
-    });
 }
 
 async function deleteMessage(req , res) {
