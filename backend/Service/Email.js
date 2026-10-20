@@ -24,14 +24,23 @@ transporter.on('error' , (err) => {
 function resolveBaseUrl() {
     const configured = String(process.env.BASE_URL || '').trim().replace(/\/+$/, '');
     const renderUrl = String(process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/+$/, '');
+    // Vercel exposes the deployment host without a scheme. Prefer the stable
+    // production domain over the per-deployment URL, since verification links
+    // are opened later and preview URLs can expire.
+    const vercelHost = String(
+        process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || ''
+    ).trim().replace(/\/+$/, '');
+    const vercelUrl = vercelHost && !/^https?:\/\//i.test(vercelHost)
+        ? `https://${vercelHost}`
+        : vercelHost;
+    const fallbackUrl = renderUrl || vercelUrl;
     const pointsToLocalhost = !configured || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(configured);
 
-    // Render exposes RENDER_EXTERNAL_URL automatically. Prefer it when
-    // BASE_URL still contains the local development address, otherwise the
-    // verification link in the email points at localhost and the account can
-    // never be verified from a deployed signup.
-    if (renderUrl && pointsToLocalhost) return renderUrl;
-    return configured || renderUrl || 'http://localhost:3000';
+    // Prefer the platform-provided public URL when BASE_URL still contains the
+    // local development address, otherwise the verification link in the email
+    // points at localhost and the account can never be verified after signup.
+    if (fallbackUrl && pointsToLocalhost) return fallbackUrl;
+    return configured || fallbackUrl || 'http://localhost:3000';
 }
 
 async function SendVerification(email , token) {

@@ -7,20 +7,19 @@ import {
   UNAUTHORIZED_EVENT,
 } from '../api';
 
-// Empty in local dev (Vite proxies /socket.io); on Vercel it points at Render.
+// Empty in local dev (Vite proxies /socket.io to :3000). On Vercel the API is
+// same-origin, so no socket URL is needed and sockets stay disabled: a Vercel
+// Function WebSocket is pinned to one instance and capped at 300s on Hobby.
+// ChatPage's polling sync is the production realtime path; set
+// VITE_SOCKET_URL only when the API runs on a host with a real socket server.
 const SOCKET_URL = normalizeBaseUrl(
   import.meta.env.VITE_SOCKET_URL ||
     import.meta.env.VITE_API_URL ||
     import.meta.env.VITE_BACKEND_URL ||
     ''
 );
-const SOCKET_CONFIGURED = !import.meta.env.PROD || Boolean(SOCKET_URL);
-
-if (!SOCKET_CONFIGURED) {
-  console.error(
-    '[socket] VITE_API_URL/VITE_SOCKET_URL is missing in this production build; Socket.IO will hit the Vercel origin.'
-  );
-}
+const SOCKET_ENABLED = import.meta.env.DEV || Boolean(SOCKET_URL);
+const SOCKET_CONFIGURED = true;
 
 // Opens one Socket.IO connection authenticated with the same JWT the HTTP
 // layer uses (backend reads it from handshake.auth.token).
@@ -41,16 +40,17 @@ export function useSocket(token) {
   const authToken = token ?? getToken();
 
   useEffect(() => {
-    if (!authToken) return undefined;
+    if (!authToken || !SOCKET_ENABLED) return undefined;
 
     let cancelled = false;
     setAuthFailed(false);
 
-    // Let Socket.IO fall back to polling: forcing websocket-only turns a
-    // blocked/upgraded websocket into a hard "never connects" failure.
+    // On a real socket host, go straight to WebSocket. In development let
+    // Socket.IO negotiate both transports through the Vite proxy.
     const socket = io(SOCKET_URL || undefined, {
       auth: { token: authToken },
       withCredentials: true,
+      transports: import.meta.env.DEV ? undefined : ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 500,

@@ -1,11 +1,11 @@
 const express = require('express');
 const app = express();
-const sequelize = require('../UTIL/Database');  
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 
 const { corsOrigin } = require('../CORS');
+const { initDatabase } = require('../DBInit');
 
 app.use(cors({
   origin: corsOrigin,
@@ -54,15 +54,31 @@ app.use(morgan('combined' , {stream : accessLogStream}));
 
 app.use(express.json());
 
-// Public readiness probe used to verify the Render service and its database
-// independently from the frontend.
+// Public readiness probe. Works on both the long-running local server and the
+// Vercel function, and reports which runtime answered.
 app.get('/health' , async (req , res) => {
     try {
-        await sequelize.authenticate();
-        return res.status(200).json({ ok : true , db : 'up' });
+        await initDatabase();
+        return res.status(200).json({
+            ok : true ,
+            db : 'up' ,
+            runtime : process.env.VERCEL ? 'vercel' : 'node'
+        });
     } catch (err) {
         console.error('[health] database check failed' , err.message);
         return res.status(503).json({ ok : false , db : 'down' });
+    }
+});
+
+// On Vercel the app is imported before any request is handled, so the
+// connection may still be warming up. Awaiting the cached init promise here
+// makes the first API call wait for the database instead of failing.
+app.use(async (req , res , next) => {
+    try {
+        await initDatabase();
+        next();
+    } catch (err) {
+        next(err);
     }
 });
 

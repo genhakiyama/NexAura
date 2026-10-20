@@ -3,6 +3,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const http = require('http');
 const app = require('./Server/app');
 const sequelize = require('./UTIL/Database');
+const { initDatabase, shouldSync, shouldAlter } = require('./DBInit');
 
 const registerHandlers = require('./Socket/SocketHandler');
 const server = http.createServer(app);
@@ -11,21 +12,20 @@ const io = require('./socketIo').init(server);
 registerHandlers(io);
 
 const PORT = process.env.PORT || 3000;
-const isDeployed = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
-const shouldAlter = process.env.DB_SYNC_ALTER !== undefined
-    ? process.env.DB_SYNC_ALTER === 'true'
-    : !isDeployed;
 
 async function start() {
     try {
-        await sequelize.authenticate();
+        await initDatabase();
         console.log('[db] connected');
 
         // An unawaited sync({ alter: true }) used to reject in the background
-        // and kill Node 22 on Render. Await it, and never run destructive
-        // ALTERs on a deployed database unless DB_SYNC_ALTER=true is explicit.
-        await sequelize.sync(shouldAlter ? { alter : true } : {});
-        console.log(`[db] models synchronized (alter=${shouldAlter})`);
+        // and kill Node 22. The schema step now lives in DBInit: it runs for
+        // local development and stays disabled on Vercel unless DB_SYNC=true.
+        console.log(
+            shouldSync
+                ? `[db] models synchronized (alter=${shouldAlter})`
+                : '[db] schema sync skipped'
+        );
     } catch (err) {
         console.error('[fatal] database initialization failed:' , err.message);
         process.exit(1);

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { API_CONFIGURED } from '../api';
 
 export default function AuthPage({ mode }) {
   const isSignup = mode === 'signup';
@@ -40,14 +39,6 @@ export default function AuthPage({ mode }) {
       <div className="auth-card">
         <h1 className="brand">Nexora</h1>
         <p className="subtitle">{isSignup ? 'Tạo tài khoản mới' : 'Đăng nhập để tiếp tục'}</p>
-
-        {!API_CONFIGURED && (
-          <div className="alert error">
-            Bản deploy chưa có <code>VITE_API_URL</code>. Trên Vercel vào Settings →
-            Environment Variables, đặt <code>VITE_API_URL</code> bằng URL Render (ví dụ{' '}
-            <code>https://ten-service.onrender.com</code>) rồi Redeploy.
-          </div>
-        )}
 
         <form onSubmit={onSubmit} className="auth-form">
           <label>

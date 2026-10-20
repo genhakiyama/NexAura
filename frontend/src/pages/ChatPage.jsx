@@ -16,6 +16,9 @@ import MessageList from '../components/MessageList';
 import Composer from '../components/Composer';
 
 const PENDING_SEND_TTL_MS = 30_000;
+// Production realtime interval. Three seconds keeps a chat usable without
+// hammering the server with one request per second.
+const POLL_MS = 3000;
 
 // Conversation/message ids travel as JSON numbers over HTTP but can arrive as
 // strings from a URL param or a socket frame. Comparing with `===` across the
@@ -26,13 +29,16 @@ const idIn = (list, id) => list.some((x) => sameId(x, id));
 
 export default function ChatPage() {
   const { user, logout, token } = useAuth();
-  const { connected, authFailed, configured, on, off, emit } = useSocket(token);
+  const { connected, authFailed, on, off, emit } = useSocket(token);
   const { theme, toggle: toggleTheme } = useTheme();
 
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState('');
+  // True while the last HTTP sync succeeded. On Vercel realtime is polling,
+  // so this (not the socket flag) is what "trực tuyến" reflects there.
+  const [syncOk, setSyncOk] = useState(false);
   const [modal, setModal] = useState(null); // 'create' | 'join' | null
   const [showInfo, setShowInfo] = useState(false);
 
@@ -53,13 +59,22 @@ export default function ChatPage() {
     try {
       const payload = await api.myChats();
       setConversations(payload?.conversations || []);
+      setSyncOk(true);
     } catch (err) {
+      setSyncOk(false);
       setError(err.message);
     }
   }, []);
 
   useEffect(() => {
     loadChats();
+  }, [loadChats]);
+
+  // Conversations can change without a socket (someone creates/joins a chat,
+  // or the list was stale on a cold start). Refresh them on a slow interval.
+  useEffect(() => {
+    const timer = setInterval(loadChats, 15_000);
+    return () => clearInterval(timer);
   }, [loadChats]);
 
   // ---- Open a chat: subscribe via socket + fetch history via HTTP ----
@@ -92,6 +107,73 @@ export default function ChatPage() {
     },
     [emit]
   );
+
+  // ---- Polling sync ----
+  // Vercel Functions cannot keep one Socket.IO room across instances (and a
+  // WebSocket is closed at the 300s Hobby limit), so the deployed app keeps
+  // the open conversation fresh over HTTP. It is a no-op locally beyond a few
+  // extra GETs; socket events still make updates instant there.
+  useEffect(() => {
+    if (!activeId) return undefined;
+
+    let alive = true;
+    let inFlight = false;
+    let timer;
+
+    const tick = async () => {
+      if (!alive || inFlight) return;
+      if (document.visibilityState === 'hidden') {
+        timer = setTimeout(tick, POLL_MS);
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const payload = await api.messages(activeId);
+        if (!alive || activeIdRef.current !== activeId) return;
+        setMessages((prev) => {
+          const next = mergeHistory(prev, payload?.messages || [], tombstonesRef.current);
+          // Returning the same reference when nothing changed prevents the
+          // message list from scrolling to the bottom every poll interval
+          // while the user is reading older messages.
+          const unchanged =
+            next.length === prev.length &&
+            next.every(
+              (m, i) =>
+                sameId(m.id, prev[i].id) &&
+                m.content === prev[i].content &&
+                m.senderName === prev[i].senderName
+            );
+          return unchanged ? prev : next;
+        });
+        setSyncOk(true);
+      } catch {
+        if (alive) setSyncOk(false);
+      } finally {
+        inFlight = false;
+        if (alive) timer = setTimeout(tick, POLL_MS);
+      }
+    };
+
+    timer = setTimeout(tick, 1200);
+
+    // Returning to the tab should show new messages immediately instead of
+    // waiting for the next tick.
+    const refreshNow = () => {
+      if (document.visibilityState !== 'visible') return;
+      clearTimeout(timer);
+      tick();
+    };
+    document.addEventListener('visibilitychange', refreshNow);
+    window.addEventListener('focus', refreshNow);
+
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshNow);
+      window.removeEventListener('focus', refreshNow);
+    };
+  }, [activeId]);
 
   // ---- Socket: live messages + join/create notifications ----
   useEffect(() => {
@@ -185,19 +267,34 @@ export default function ChatPage() {
     ];
     try {
       const payload = await api.sendMessage({ conversationId: activeId, type: 'text', content });
-      // No optimistic append: the sender's own socket receives 'send_message' back.
       const messageId = Number(payload?.sendMessage?.messageId);
       if (!Number.isInteger(messageId) || messageId <= 0) {
         pendingSendsRef.current = pendingSendsRef.current.filter((p) => p !== pending);
         return;
       }
       pending.messageId = messageId;
+
+      // Render the persisted message immediately. On Vercel there is no
+      // socket echo, and waiting 3s for the poll would make sending feel
+      // broken. If the socket echo arrived first, upsertIncoming folds the
+      // temporary row into this real id instead of duplicating it.
+      setMessages((prev) =>
+        upsertIncoming(
+          prev,
+          {
+            id: messageId,
+            from: user?.username,
+            message: content,
+            senderId: user?.userId,
+            createdAt: new Date().toISOString(),
+          },
+          user?.username
+        ).list
+      );
+
       if (pending.tempId != null) {
-        // Echo already rendered under a temp id: fold it into the real id so
-        // the row can be deleted without a DB cast error.
-        setMessages((prev) =>
-          prev.map((m) => (m.id === pending.tempId ? { ...m, id: messageId } : m))
-        );
+        // Echo already rendered under a temp id and has now been folded into
+        // the real id, so the pending entry is no longer needed.
         pendingSendsRef.current = pendingSendsRef.current.filter((p) => p !== pending);
       }
     } catch (err) {
@@ -282,6 +379,10 @@ export default function ChatPage() {
     }
   };
 
+  // A socket is optional on Vercel; a successful HTTP sync is enough to say
+  // the chat is online.
+  const online = connected || syncOk;
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -322,22 +423,22 @@ export default function ChatPage() {
               </button>
             )}
             <span
-              className={connected ? 'dot on' : 'dot off'}
+              className={online ? 'dot on' : 'dot off'}
               title={
                 authFailed
                   ? 'Phiên đăng nhập đã hết hạn, đang chuyển về trang đăng nhập'
-                  : !configured
-                    ? 'Thiếu VITE_API_URL trong bản build production'
-                    : undefined
+                  : connected
+                    ? 'Đang nhận tin nhắn qua Socket.IO'
+                    : syncOk
+                      ? 'Đang đồng bộ tin nhắn mỗi 3 giây'
+                      : 'Không kết nối được backend'
               }
             >
-              {connected
+              {online
                 ? 'trực tuyến'
                 : authFailed
                   ? 'hết phiên'
-                  : !configured
-                    ? 'chưa cấu hình backend'
-                    : 'đang kết nối...'}
+                  : 'đang kết nối...'}
             </span>
           </span>
         </div>

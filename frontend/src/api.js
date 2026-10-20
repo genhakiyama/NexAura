@@ -6,16 +6,17 @@ export function normalizeBaseUrl(value) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-// Set VITE_API_URL on Vercel to the Render backend origin.
-// Empty in local dev so the Vite proxy handles /auth, /chat and /socket.io.
+// Empty base means "same origin": the Vite dev server proxies /auth, /chat and
+// /socket.io to :3000, and the Vercel deployment routes those paths to the
+// backend service on the same domain. VITE_API_URL is only needed when the API
+// lives on another host.
 const API_BASE = normalizeBaseUrl(
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || ''
 );
 
-// In a production build an empty base means every request falls into the
-// Vercel SPA rewrite and gets index.html. Surface that instead of crashing on
-// a null JSON payload.
-export const API_CONFIGURED = !import.meta.env.PROD || Boolean(API_BASE);
+// Same-origin requests are always configured. Kept as an export because
+// AuthPage renders a deployment warning based on it.
+export const API_CONFIGURED = true;
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -70,8 +71,8 @@ async function request(method, path, body, { auth = true } = {}) {
   } catch {
     throw new ApiError(
       API_BASE
-        ? `Không kết nối được tới backend (${API_BASE}). Kiểm tra service Render đã chạy và CORS đã cho phép domain này.`
-        : 'Không kết nối được tới backend. Bản deploy chưa cấu hình VITE_API_URL.',
+        ? `Không kết nối được tới backend (${API_BASE}). Kiểm tra service đã chạy và CORS đã cho phép domain này.`
+        : 'Không kết nối được tới backend cùng domain. Kiểm tra service backend trong vercel.json đã deploy thành công chưa.',
       0
     );
   }
@@ -99,7 +100,7 @@ async function request(method, path, body, { auth = true } = {}) {
       serverMessage ||
       (API_BASE
         ? `Yêu cầu thất bại (${res.status})`
-        : `Frontend chưa cấu hình VITE_API_URL nên request đang rơi vào trang Vercel (HTTP ${res.status}). Hãy đặt VITE_API_URL = URL Render rồi redeploy.`);
+        : `Yêu cầu thất bại (${res.status}). Backend cùng domain chưa phản hồi đúng — kiểm tra rewrite /auth và /chat trong vercel.json.`);
     throw new ApiError(message, res.status);
   }
 
@@ -107,7 +108,7 @@ async function request(method, path, body, { auth = true } = {}) {
     throw new ApiError(
       API_BASE
         ? 'Backend trả về dữ liệu không hợp lệ (không phải JSON).'
-        : 'Frontend chưa cấu hình VITE_API_URL nên request đang rơi vào trang Vercel. Hãy đặt VITE_API_URL = URL Render rồi redeploy.',
+        : 'Request đang nhận về trang HTML của frontend thay vì JSON. Kiểm tra rewrite /auth và /chat trong vercel.json đã trỏ tới service backend chưa.',
       res.status
     );
   }

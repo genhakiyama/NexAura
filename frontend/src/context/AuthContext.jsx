@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
     const payload = await api.login({ email, username, password });
     // Backend puts the token under payload.token (watch for its `sucess` typo — we only read payload).
     if (!payload?.token) {
-      throw new Error('Backend không trả về token đăng nhập. Kiểm tra VITE_API_URL và thử lại.');
+      throw new Error('Backend không trả về token đăng nhập. Kiểm tra service backend trên Vercel rồi thử lại.');
     }
     setToken(payload.token);
     setTokenState(payload.token);

@@ -18,6 +18,18 @@ const explicitOrigins = new Set(
 // login, REST and the Socket.IO handshake all fail from the deployed frontend.
 const autoHosts = ['vercel.app', 'onrender.com'];
 
+// A custom production domain is not a *.vercel.app host. Vercel exposes it
+// without a scheme, so add both platform URLs to the allowlist automatically.
+const vercelOrigins = [
+  process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  process.env.VERCEL_URL,
+]
+  .map(normalizeOrigin)
+  .filter(Boolean)
+  .map((host) => (/^https?:\/\//i.test(host) ? host : `https://${host}`));
+
+vercelOrigins.forEach((origin) => explicitOrigins.add(origin));
+
 const warnedOrigins = new Set();
 
 function isAllowedOrigin(origin) {
