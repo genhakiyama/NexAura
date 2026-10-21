@@ -35,30 +35,46 @@ async function SignUp(email , username , password) {
 
         const cleanUsername = username.trim();
 
-        // 3. Kiểm tra xem username đã tồn tại chưa
+        // 3. Kiểm tra xem username đã tồn tại chưa (tự động dọn dẹp nếu là tài khoản chưa xác thực quá hạn 15 phút)
         const existingUser = await User.findOne({
             where : {
                 username : cleanUsername
             }
         });
-        if (existingUser) {   
-            return {
-                status_code : authErr.UserAlreadyExistsError.defaultStatusCode , 
-                error : authErr.UserAlreadyExistsError.defaultMessage
-            };
+        if (existingUser) {
+            const isExpired = !existingUser.isVerified && (
+                (existingUser.verificationExpire && new Date(existingUser.verificationExpire) <= new Date()) ||
+                (existingUser.createdAt && new Date(existingUser.createdAt) <= new Date(Date.now() - 15 * 60 * 1000))
+            );
+            if (isExpired) {
+                await existingUser.destroy();
+            } else {
+                return {
+                    status_code : authErr.UserAlreadyExistsError.defaultStatusCode , 
+                    error : authErr.UserAlreadyExistsError.defaultMessage
+                };
+            }
         }
 
-        // 4. Kiểm tra xem email đã được đăng ký tài khoản khác chưa
+        // 4. Kiểm tra xem email đã được đăng ký tài khoản khác chưa (tự động dọn dẹp nếu là tài khoản chưa xác thực quá hạn 15 phút)
         const existingEmail = await User.findOne({
             where : {
                 email : cleanEmail
             }
         });
         if (existingEmail) {
-            return {
-                status_code : 409 ,
-                error : 'Địa chỉ email này đã được sử dụng cho một tài khoản khác.'
-            };
+            const isExpired = !existingEmail.isVerified && (
+                (existingEmail.verificationExpire && new Date(existingEmail.verificationExpire) <= new Date()) ||
+                (existingEmail.createdAt && new Date(existingEmail.createdAt) <= new Date(Date.now() - 15 * 60 * 1000))
+            );
+            if (isExpired) {
+                await existingEmail.destroy();
+            } else {
+                return {
+                    status_code : 409 ,
+                    error : 'Địa chỉ email này đã được sử dụng cho một tài khoản khác.'
+                };
+            }
         }
 
         // 5. Chuẩn bị token xác thực + mã OTP 6 số và gửi email xác thực qua Gmail

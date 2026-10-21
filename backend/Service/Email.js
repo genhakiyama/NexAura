@@ -1,4 +1,7 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 require('dotenv').config();
+
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
@@ -7,18 +10,22 @@ const Token = require('../UTIL/Token');
 
 const mailError = require('../Errors/Email');
 
-const transporter = nodemailer.createTransport({
-    service : 'gmail' ,
-    auth : {
-        user : process.env.EMAIL_USER ,
-        pass : process.env.EMAIL_PASSWORD
-    }
-});
+function createTransporter() {
+    return nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASSWORD
+        }
+    });
+}
+
+let transporter = createTransporter();
 
 // Prevent a rejected SMTP connection from becoming an uncaught exception
 // (which would crash the whole process and take down every request).
-transporter.on('error' , (err) => {
-    console.error('[mail transport error]' , err.message);
+transporter.on('error', (err) => {
+    console.error('[mail transport error]', err.message);
 });
 
 function resolveBaseUrl() {
@@ -40,32 +47,79 @@ function resolveBaseUrl() {
     // local development address, otherwise the verification link in the email
     // points at localhost and the account can never be verified after signup.
     if (fallbackUrl && pointsToLocalhost) return fallbackUrl;
-    return configured || fallbackUrl || 'http://localhost:3000';
+
+    let result = configured || fallbackUrl || `http://localhost:${process.env.PORT || 3000}`;
+    if (result && !/^https?:\/\//i.test(result)) {
+        result = `https://${result}`;
+    }
+    return result;
 }
 
-async function SendVerification(email , token, otp) {
-    const link = `${resolveBaseUrl()}/auth/verify-Email?token=${token}`;
+const resolveBaseURL = resolveBaseUrl;
+
+function resolveClientUrl() {
+    const configuredClient = String(
+        process.env.CLIENT_URL ||
+        process.env.FRONTEND_URL ||
+        process.env.APP_URL ||
+        ''
+    ).trim().replace(/\/+$/, '');
+
+    if (configuredClient) {
+        return /^https?:\/\//i.test(configuredClient) ? configuredClient : `https://${configuredClient}`;
+    }
+
+    // On Vercel (monorepo), both frontend and backend are on the same domain
+    const vercelHost = String(
+        process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || ''
+    ).trim().replace(/\/+$/, '');
+    if (vercelHost) {
+        return /^https?:\/\//i.test(vercelHost) ? `https://${vercelHost}` : vercelHost;
+    }
+
+    // In local development, frontend Vite default is on port 5173
+    return 'http://localhost:5173';
+}
+
+const resolveClientURL = resolveClientUrl;
+
+async function SendVerification(email, token, otp) {
+    if (!email) {
+        return { success: false, error: 'Địa chỉ email không được để trống.' };
+    }
+    const cleanToken = String(token || '').trim();
+    const encodedToken = encodeURIComponent(cleanToken);
+    const link = `${resolveBaseUrl()}/auth/verify-Email?token=${encodedToken}`;
+
+    const otpSection = otp ? `
+        <!-- OTP Code Display Box -->
+        <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+            <div style="font-size: 12px; text-transform: uppercase; color: #64748b; font-weight: 700; letter-spacing: 0.08em; margin-bottom: 8px;">Mã OTP xác thực của bạn</div>
+            <div style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; font-family: 'Courier New', Courier, monospace;">${otp}</div>
+            <div style="font-size: 12.5px; color: #94a3b8; margin-top: 8px;">Hiệu lực trong vòng <strong>15 phút</strong> (chỉ dùng 1 lần)</div>
+        </div>
+    ` : '';
+
+    const instructionText = otp
+        ? 'Cảm ơn bạn đã đăng ký Nexora. Bạn có thể kích hoạt tài khoản bằng cách nhập mã OTP 6 số bên dưới hoặc bấm nút kích hoạt trực tiếp:'
+        : 'Cảm ơn bạn đã đăng ký Nexora. Vui lòng bấm vào nút bên dưới để kích hoạt tài khoản của bạn:';
+
     try {
         const info = await transporter.sendMail({
-            from : `"Nexora Messenger" <${process.env.EMAIL_USER}>` ,
-            to : email ,
-            subject : "Xác thực tài khoản Nexora của bạn - Mã OTP kích hoạt" ,
-            html : `
+            from: `"Nexora Messenger" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: "Xác thực tài khoản Nexora của bạn - Mã OTP kích hoạt",
+            html: `
                 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; color: #0f172a;">
                     <div style="margin-bottom: 24px; text-align: center;">
                         <span style="font-weight: 900; font-size: 24px; letter-spacing: -0.03em; color: #4f46e5; display: inline-block;">NEXORA</span>
                     </div>
                     <h2 style="color: #0f172a; margin-top: 0; font-size: 21px; text-align: center; font-weight: 700;">Xác thực tài khoản Nexora</h2>
                     <p style="color: #475569; font-size: 15px; line-height: 1.6; text-align: center; margin-bottom: 24px;">
-                        Cảm ơn bạn đã đăng ký Nexora. Bạn có thể kích hoạt tài khoản bằng cách nhập mã OTP 6 số bên dưới hoặc bấm nút kích hoạt trực tiếp:
+                        ${instructionText}
                     </p>
 
-                    <!-- OTP Code Display Box -->
-                    <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
-                        <div style="font-size: 12px; text-transform: uppercase; color: #64748b; font-weight: 700; letter-spacing: 0.08em; margin-bottom: 8px;">Mã OTP xác thực của bạn</div>
-                        <div style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; font-family: 'Courier New', Courier, monospace;">${otp}</div>
-                        <div style="font-size: 12.5px; color: #94a3b8; margin-top: 8px;">Hiệu lực trong vòng <strong>15 phút</strong> (chỉ dùng 1 lần)</div>
-                    </div>
+                    ${otpSection}
 
                     <!-- Direct Verification Button -->
                     <div style="margin: 28px 0; text-align: center;">
@@ -92,7 +146,7 @@ async function SendVerification(email , token, otp) {
 
         return { success: true, info };
     } catch (err) {
-        console.error('[SendVerification failed]' , err.message);
+        console.error('[SendVerification failed]', err.message);
         let errorMsg = 'Không thể gửi email xác thực lúc này. Vui lòng thử lại sau.';
         if (err.responseCode === 550 || err.message?.includes('5.1.1') || err.message?.includes('does not exist')) {
             errorMsg = 'Địa chỉ email này không tồn tại hoặc không thể nhận thư.';
@@ -101,51 +155,53 @@ async function SendVerification(email , token, otp) {
     }
 }
 
+const sendVerification = SendVerification;
+
 async function verifyEmail(token) {
     if (!token || typeof token !== 'string') {
         return {
-            error : 'Liên kết xác thực không hợp lệ.'
+            error: 'Liên kết xác thực không hợp lệ.'
         };
     }
     const hashedToken = crypto.createHash('sha256').update(token.trim()).digest('hex');
     const user = await User.findOne({
-        where : {
-            verificationToken : hashedToken
+        where: {
+            verificationToken: hashedToken
         }
     });
-    
+
     if (!user) {
         return {
-            status_code : 400,
-            error : 'Liên kết xác thực không tồn tại hoặc tài khoản đã được kích hoạt trước đó.'
+            status_code: 400,
+            error: 'Liên kết xác thực không tồn tại hoặc tài khoản đã được kích hoạt trước đó.'
         };
     }
 
     if (user.isVerified) {
         return {
-            status_code : 200,
-            message : 'Tài khoản của bạn đã được xác thực trước đó. Bạn có thể đăng nhập ngay.'
+            status_code: 200,
+            message: 'Tài khoản của bạn đã được xác thực trước đó. Bạn có thể đăng nhập ngay.'
         };
     }
 
     if (!user.verificationExpire || new Date(user.verificationExpire) <= new Date()) {
         return {
-            status_code : 400,
-            error : 'Liên kết xác thực đã hết hạn (chỉ có hiệu lực trong 15 phút). Vui lòng yêu cầu gửi lại mã xác minh mới.'
+            status_code: 400,
+            error: 'Liên kết xác thực đã hết hạn (chỉ có hiệu lực trong 15 phút). Vui lòng yêu cầu gửi lại mã xác minh mới.'
         };
     }
 
     await user.update({
-        isVerified : true , 
-        verificationToken : null , 
-        verificationOtp : null ,
-        verificationExpire : null,
-        resendCount : 0
+        isVerified: true,
+        verificationToken: null,
+        verificationOtp: null,
+        verificationExpire: null,
+        resendCount: 0
     });
 
     return {
-        success : true,
-        message : 'Xác thực tài khoản thành công! Bạn có thể đăng nhập ngay bây giờ.'
+        success: true,
+        message: 'Xác thực tài khoản thành công! Bạn có thể đăng nhập ngay bây giờ.'
     };
 }
 
@@ -312,8 +368,12 @@ async function resendVerification(email) {
 
 module.exports = {
     SendVerification,
+    sendVerification,
     verifyEmail,
     verifyOtp,
     resendVerification,
-    resolveBaseUrl
+    resolveBaseUrl,
+    resolveBaseURL,
+    resolveClientUrl,
+    resolveClientURL
 };

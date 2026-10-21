@@ -28,6 +28,7 @@ const PostEditor = require('./Models/PostEditor');
 const Comment = require('./Models/Comment');
 const Reaction = require('./Models/Reaction');
 const SocialNotification = require('./Models/SocialNotification');
+const { startUserCleanupCron } = require('./Cron/UserCleanup');
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -60,7 +61,10 @@ async function startServer() {
         registerSocketHandlers(io);
         console.log('✅ [3/3] Socket.IO đã sẵn sàng.');
 
-        // 4. Lắng nghe cổng
+        // 4. Khởi chạy Cron Job tự động xoá tài khoản chưa xác thực quá 15 phút
+        const cleanupCronTask = startUserCleanupCron();
+
+        // 5. Lắng nghe cổng
         server.listen(PORT, () => {
             console.log('============================================================');
             console.log(`🎉 NEXORA BACKEND ĐÃ CHẠY TẠI: http://localhost:${PORT}`);
@@ -72,6 +76,7 @@ async function startServer() {
             console.log(`• Social Feed & RBAC:   http://localhost:${PORT}/feed`);
             console.log(`• WebSocket Ticket:     POST http://localhost:${PORT}/ws/ticket`);
             console.log(`• WebSocket Endpoint:   ws://localhost:${PORT}`);
+            console.log(`• User Cleanup Cron:    Running (Every minute)`);
             console.log('------------------------------------------------------------');
             console.log('💡 Để chạy frontend: cd frontend && npm run dev');
             console.log('------------------------------------------------------------');
@@ -80,6 +85,7 @@ async function startServer() {
         // Graceful shutdown
         const shutdown = (signal) => {
             console.log(`\n🛑 Nhận tín hiệu ${signal}. Đang đóng server...`);
+            if (cleanupCronTask) cleanupCronTask.stop();
             server.close(() => {
                 console.log('👋 Nexora Server đã dừng.');
                 process.exit(0);

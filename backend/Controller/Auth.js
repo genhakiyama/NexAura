@@ -195,7 +195,7 @@ async function GetWsTicket(req , res) {
 async function VerifyEmail(req , res) {
     const { token } = req.query;
     const isCheck = await Email.verifyEmail(token);
-    const baseUrl = Email.resolveBaseUrl();
+    const clientUrl = Email.resolveClientUrl ? Email.resolveClientUrl() : (Email.resolveBaseUrl ? Email.resolveBaseUrl() : 'http://localhost:5173');
 
     // Nếu request đến từ trình duyệt người dùng click vào email
     const acceptsHtml = req.accepts('html') && !req.xhr && !req.headers.accept?.includes('application/json');
@@ -224,7 +224,7 @@ async function VerifyEmail(req , res) {
                         <div class="icon-wrap">✕</div>
                         <h1>Xác thực không thành công</h1>
                         <p>${isCheck.error}</p>
-                        <a href="${baseUrl}/login" class="btn">Đến trang Đăng nhập & Gửi lại mã</a>
+                        <a href="${clientUrl}/login" class="btn">Đến trang Đăng nhập & Gửi lại mã</a>
                     </div>
                 </body>
                 </html>
@@ -246,13 +246,15 @@ async function VerifyEmail(req , res) {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta http-equiv="refresh" content="4;url=${clientUrl}/login?verified=true">
                 <title>Kích hoạt thành công | Nexora</title>
                 <style>
                     body { margin: 0; padding: 0; background: #0b0f19; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
                     .card { max-width: 440px; margin: 20px; padding: 36px 28px; background: #131b2e; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 20px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
                     .icon-wrap { width: 68px; height: 68px; margin: 0 auto 20px; background: rgba(16, 185, 129, 0.15); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #10b981; font-size: 32px; }
                     h1 { font-size: 22px; margin: 0 0 12px; font-weight: 700; color: #34d399; }
-                    p { font-size: 14.5px; line-height: 1.6; color: #94a3b8; margin: 0 0 26px; }
+                    p { font-size: 14.5px; line-height: 1.6; color: #94a3b8; margin: 0 0 16px; }
+                    .redirect-note { font-size: 12.5px; color: #64748b; margin-bottom: 24px; }
                     .btn { display: inline-block; background: #10b981; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 10px; font-weight: 600; font-size: 14.5px; transition: all 0.2s; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3); }
                     .btn:hover { background: #059669; transform: translateY(-1px); }
                 </style>
@@ -262,7 +264,8 @@ async function VerifyEmail(req , res) {
                     <div class="icon-wrap">✓</div>
                     <h1>Kích hoạt tài khoản thành công!</h1>
                     <p>Địa chỉ email của bạn đã được xác thực hoàn tất. Bạn có thể đăng nhập ngay để kết nối và trò chuyện.</p>
-                    <a href="${baseUrl}/login" class="btn">Đăng nhập vào Nexora</a>
+                    <div class="redirect-note">Tự động chuyển hướng đến trang đăng nhập sau vài giây...</div>
+                    <a href="${clientUrl}/login?verified=true" class="btn">Đăng nhập vào Nexora</a>
                 </div>
             </body>
             </html>
