@@ -65,7 +65,19 @@ export class ApiError extends Error {
 
 export const UNAUTHORIZED_EVENT = 'nexora:unauthorized';
 
-async function request(method, path, body, { auth = true } = {}) {
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+function subscribeTokenRefresh(cb) {
+  refreshSubscribers.push(cb);
+}
+
+function onRefreshed(token) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
+async function request(method, path, body, { auth = true, isRetry = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (auth) {
     const token = getToken();
@@ -77,6 +89,7 @@ async function request(method, path, body, { auth = true } = {}) {
     res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
+      credentials: 'include', // transmit HttpOnly cookies
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -86,6 +99,47 @@ async function request(method, path, body, { auth = true } = {}) {
         : 'Không kết nối được tới backend cùng domain. Kiểm tra service backend trong vercel.json đã deploy thành công chưa.',
       0
     );
+  }
+
+  // Handle 401 Token Expiration with Automatic Refresh Token Rotation
+  if (res.status === 401 && auth && !isRetry && path !== '/auth/login' && path !== '/auth/refresh') {
+    if (!isRefreshing) {
+      isRefreshing = true;
+      try {
+        const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        });
+        const refreshData = await refreshRes.json();
+        const newToken = refreshData?.payload?.token;
+
+        if (refreshRes.ok && newToken) {
+          setToken(newToken);
+          isRefreshing = false;
+          onRefreshed(newToken);
+          return request(method, path, body, { auth: true, isRetry: true });
+        } else {
+          throw new Error('Refresh token failed');
+        }
+      } catch {
+        isRefreshing = false;
+        clearToken();
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        throw new ApiError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 401);
+      }
+    } else {
+      // Queue requests until refresh completes
+      return new Promise((resolve, reject) => {
+        subscribeTokenRefresh((newToken) => {
+          if (newToken) {
+            resolve(request(method, path, body, { auth: true, isRetry: true }));
+          } else {
+            reject(new ApiError('Phiên đăng nhập đã hết hạn.', 401));
+          }
+        });
+      });
+    }
   }
 
   let data = null;
@@ -99,9 +153,6 @@ async function request(method, path, body, { auth = true } = {}) {
   }
 
   if (!res.ok) {
-    // A 401 on an authenticated call means the stored session is dead server-side.
-    // Drop it and let AuthProvider send the user back to /login instead of leaving
-    // them on a chat shell that can no longer load anything.
     if (auth && res.status === 401) {
       clearToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -207,11 +258,74 @@ export const api = {
   messages: (conversationId) =>
     request('GET', `/chat/conversation/${conversationId}/messages`),
 
-  // ---- Image upload (multipart/form-data) ----
   uploadImage: ({ conversationId, file }) => {
     const fd = new FormData();
     fd.append('conversationId', conversationId);
     fd.append('image', file);
     return requestMultipart('/chat/message/upload', fd);
   },
+
+  // ---- Friends & Users (Social) ----
+  searchUsers: (q) => request('GET', `/users/search?q=${encodeURIComponent(q)}`),
+  sendFriendRequest: (targetUserId) =>
+    request('POST', '/friends/requests', { targetUserId }),
+  getFriendRequests: (type = 'incoming') =>
+    request('GET', `/friends/requests?type=${type}`),
+  respondFriendRequest: (id, action) =>
+    request('PATCH', `/friends/requests/${id}`, { action }),
+  cancelFriendRequest: (id) =>
+    request('DELETE', `/friends/requests/${id}`),
+  unfriend: (friendId) =>
+    request('DELETE', `/friends/${friendId}`),
+  getFriends: () => request('GET', '/friends'),
+  blockUser: (id) => request('POST', `/users/${id}/block`),
+  unblockUser: (id) => request('POST', `/users/${id}/unblock`),
+  createDirectChat: (targetUserId) =>
+    request('POST', '/chat/conversation/direct', { targetUserId }),
+
+  // ---- Social Feed & Posts ----
+  getFeed: ({ limit = 10, cursor = null } = {}) => {
+    let url = `/feed/posts?limit=${limit}`;
+    if (cursor) url += `&cursor=${cursor}`;
+    return request('GET', url);
+  },
+  createPost: ({ content, mediaUrls = [], visibility = 'friends' }) =>
+    request('POST', '/feed/posts', { content, mediaUrls, visibility }),
+  updatePost: (postId, { content, mediaUrls, visibility }) =>
+    request('PATCH', `/feed/posts/${postId}`, { content, mediaUrls, visibility }),
+  deletePost: (postId) =>
+    request('DELETE', `/feed/posts/${postId}`),
+
+  // Delegated Post Editors (RBAC)
+  grantPostEditor: (postId, targetUserId) =>
+    request('POST', `/feed/posts/${postId}/editors`, { targetUserId }),
+  revokePostEditor: (postId, targetUserId) =>
+    request('DELETE', `/feed/posts/${postId}/editors/${targetUserId}`),
+  getPostEditors: (postId) =>
+    request('GET', `/feed/posts/${postId}/editors`),
+
+  // Comments
+  getComments: (postId) =>
+    request('GET', `/feed/posts/${postId}/comments`),
+  addComment: (postId, { content, parentId = null }) =>
+    request('POST', `/feed/posts/${postId}/comments`, { content, parentId }),
+  deleteComment: (commentId) =>
+    request('DELETE', `/feed/comments/${commentId}`),
+
+  // Reactions
+  toggleReaction: ({ targetType, targetId, type = 'like' }) =>
+    request('POST', '/feed/reactions', { targetType, targetId, type }),
+
+  // Social Notifications
+  getSocialNotifications: ({ limit = 20 } = {}) =>
+    request('GET', `/feed/notifications?limit=${limit}`),
+  markSocialNotificationAsRead: (id) =>
+    request('PATCH', `/feed/notifications/${id}/read`),
+
+  // ---- WebSocket Single-Use Ticket ----
+  getWsTicket: () => request('POST', '/ws/ticket'),
+
+  // ---- Refresh & Logout ----
+  refreshToken: () => request('POST', '/auth/refresh', {}, { auth: false }),
+  logout: () => request('POST', '/auth/logout', {}),
 };

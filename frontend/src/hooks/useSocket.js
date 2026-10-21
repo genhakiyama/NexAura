@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
+  api,
   getToken,
   clearToken,
   normalizeBaseUrl,
@@ -45,60 +46,70 @@ export function useSocket(token) {
     let cancelled = false;
     setAuthFailed(false);
 
-    // On a real socket host, go straight to WebSocket. In development let
-    // Socket.IO negotiate both transports through the Vite proxy.
-    const socket = io(SOCKET_URL || undefined, {
-      auth: { token: authToken },
-      withCredentials: true,
-      transports: import.meta.env.DEV ? undefined : ['websocket'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 500,
-      reconnectionDelayMax: 5000,
-    });
-    socketRef.current = socket;
-
-    socket.on('connect', () => {
-      if (cancelled) return;
-      setConnected(true);
-      setAuthFailed(false);
-    });
-    socket.on('disconnect', () => {
-      if (!cancelled) setConnected(false);
-    });
-    socket.on('connect_error', (err) => {
-      if (cancelled) return;
-      setConnected(false);
-      // The server rejects a dead/expired JWT during the handshake with
-      // "Invalid token" / "Authentication error". Retrying forever can never
-      // succeed, so drop the session the same way a 401 does over HTTP.
-      const message = String(err?.message || '');
-      if (/invalid token|authentication error/i.test(message)) {
-        setAuthFailed(true);
-        socket.close();
-        clearToken();
-        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-      }
-    });
-
-    // Replay anything registered before this (re)connect.
-    listenersRef.current.forEach(([event, handler]) => socket.on(event, handler));
-
-    // Browsers throttle and drop timers/sockets on background tabs. When the
-    // tab comes back, make sure we are actually connected instead of showing a
-    // dead "connecting..." state until the next page load.
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return;
       if (socketRef.current && !socketRef.current.connected) socketRef.current.connect();
     };
     document.addEventListener('visibilitychange', onVisibility);
 
+    (async () => {
+      let authPayload = { token: authToken };
+      try {
+        const ticketRes = await api.getWsTicket();
+        if (ticketRes?.ticket) {
+          authPayload = { ticket: ticketRes.ticket };
+        }
+      } catch {
+        // Fall back to token if ticket endpoint unavailable
+      }
+      if (cancelled) return;
+
+      const socket = io(SOCKET_URL || undefined, {
+        auth: authPayload,
+        withCredentials: true,
+        transports: import.meta.env.DEV ? undefined : ['websocket'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 500,
+        reconnectionDelayMax: 5000,
+      });
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        if (cancelled) return;
+        setConnected(true);
+        setAuthFailed(false);
+      });
+      socket.on('disconnect', () => {
+        if (!cancelled) setConnected(false);
+      });
+      socket.on('connect_error', (err) => {
+        if (cancelled) return;
+        setConnected(false);
+        // The server rejects a dead/expired JWT during the handshake with
+        // "Invalid token" / "Authentication error". Retrying forever can never
+        // succeed, so drop the session the same way a 401 does over HTTP.
+        const message = String(err?.message || '');
+        if (/invalid token|authentication error/i.test(message)) {
+          setAuthFailed(true);
+          socket.close();
+          clearToken();
+          window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        }
+      });
+
+      // Replay anything registered before this (re)connect.
+      listenersRef.current.forEach(([event, handler]) => socket.on(event, handler));
+    })();
+
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibility);
-      socket.removeAllListeners();
-      socket.close();
-      socketRef.current = null;
+      if (socketRef.current) {
+        socketRef.current.removeAllListeners();
+        socketRef.current.close();
+        socketRef.current = null;
+      }
       setConnected(false);
     };
   }, [authToken]);

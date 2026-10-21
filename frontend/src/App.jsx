@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { useTheme } from './hooks/useTheme';
 import AuthPage from './pages/AuthPage';
 import ChatPage from './pages/ChatPage';
 
@@ -21,6 +22,10 @@ function BootScreen() {
 
 export default function App() {
   const { isAuthenticated, checking } = useAuth();
+
+  // Applied at the root so the palette covers every screen, including the
+  // pre-auth pages and the boot screen, not just the chat shell.
+  useTheme();
 
   if (checking) return <BootScreen />;
 

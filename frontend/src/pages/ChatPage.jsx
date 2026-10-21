@@ -14,6 +14,9 @@ import { useTheme } from '../hooks/useTheme';
 import Sidebar from '../components/Sidebar';
 import MessageList, { ImageLightbox } from '../components/MessageList';
 import Composer from '../components/Composer';
+import FriendsDrawer from '../components/FriendsDrawer';
+import FeedDrawer from '../components/FeedDrawer';
+import XFeedView from '../components/XFeedView';
 
 const PENDING_SEND_TTL_MS = 30_000;
 // Production realtime interval. Three seconds keeps a chat usable without
@@ -41,12 +44,65 @@ export default function ChatPage() {
   const [syncOk, setSyncOk] = useState(false);
   const [modal, setModal] = useState(null); // 'create' | 'join' | null
   const [showInfo, setShowInfo] = useState(false);
+  const [showFriends, setShowFriends] = useState(false);
+  const [showFeed, setShowFeed] = useState(false);
+  const [friendsList, setFriendsList] = useState([]);
+  const [activeView, setActiveView] = useState('chat'); // 'chat' | 'feed'
+  const [topSearch, setTopSearch] = useState('');
+  const [topSearchResults, setTopSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Debounced search for usernames from topbar
+  useEffect(() => {
+    const q = topSearch.trim();
+    if (!q) {
+      setTopSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const res = await api.searchUsers(q);
+        setTopSearchResults(res?.users || []);
+      } catch {}
+      setIsSearching(false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [topSearch]);
 
   const activeIdRef = useRef(null);
   activeIdRef.current = activeId;
 
   // Sends whose socket echo has not been matched to the real DB id yet.
   const pendingSendsRef = useRef([]);
+
+  // Fetch pending friend requests count on mount
+  useEffect(() => {
+    let mounted = true;
+    api.getFriendRequests('incoming')
+      .then((res) => {
+        if (mounted && res?.requests) {
+          setPendingFriendRequestsCount(res.requests.length);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleStartDirectChat = async (targetUserId) => {
+    try {
+      const res = await api.createDirectChat(targetUserId);
+      await loadChats();
+      if (res?.conversation?.id) {
+        openChat(res.conversation.id);
+      }
+    } catch (err) {
+      setError(err.message || 'Không thể tạo cuộc trò chuyện.');
+      throw err;
+    }
+  };
 
   // Ids we know are gone. A delete broadcast can land before the history
   // request resolves; without this the late history response would resurrect
@@ -92,6 +148,7 @@ export default function ChatPage() {
       // id reused by another chat would be filtered out on load.
       tombstonesRef.current = new Set();
       setActiveId(id);
+      setActiveView('chat');
       setMessages([]);
       setError('');
       emit('join_room', id); // Socket.IO -> server joins conversation:<id>
@@ -476,30 +533,175 @@ export default function ChatPage() {
       <Sidebar
         conversations={conversations}
         activeId={activeId}
+        activeView={activeView}
         onSelect={openChat}
         onNewChat={() => setModal('create')}
         onJoinChat={() => setModal('join')}
+        onOpenFriends={() => {
+          setShowFriends(true);
+          setShowInfo(false);
+        }}
+        onOpenFeed={() => {
+          setActiveView('feed');
+          setShowFriends(false);
+          setShowInfo(false);
+          loadFriendsList();
+        }}
+        pendingFriendRequestsCount={pendingFriendRequestsCount}
         onLogout={logout}
         username={user?.username}
       />
 
       <main className="chat-area">
+        {/* TOPBAR WITH BRAND/TITLE, INSTANT USERNAME SEARCH, AND CONTROLS */}
         <div className="chat-header">
-          <span>
-            {activeId
-              ? conversations.find((c) => c.id === activeId)?.name || `Chat #${activeId}`
-              : 'Nexora'}
-          </span>
+          <div className="chat-header-title">
+            {activeView === 'feed' ? (
+              <span>📰 BẢNG TIN // X-FEED</span>
+            ) : (
+              <span>
+                {activeId
+                  ? conversations.find((c) => c.id === activeId)?.name || `Chat #${activeId}`
+                  : 'NEXORA // MESSENGER'}
+              </span>
+            )}
+          </div>
+
+          {/* INSTANT TOPBAR SEARCH BY USERNAME */}
+          <div className="topbar-search-wrap">
+            <input
+              type="text"
+              className="topbar-search-input"
+              placeholder="🔍 Tìm username (@...)"
+              value={topSearch}
+              onChange={(e) => setTopSearch(e.target.value)}
+            />
+            {topSearch && (
+              <button
+                className="search-clear-btn"
+                onClick={() => setTopSearch('')}
+                title="Xoá tìm kiếm"
+              >
+                ✕
+              </button>
+            )}
+
+            {/* LIVE USERNAME SEARCH DROPDOWN */}
+            {topSearch.trim() && (
+              <ul className="topbar-search-results">
+                {isSearching && (
+                  <li className="muted" style={{ padding: '8px 12px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
+                    // ĐANG TÌM KIẾM...
+                  </li>
+                )}
+                {!isSearching && topSearchResults.length === 0 && (
+                  <li className="muted" style={{ padding: '8px 12px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
+                    // Không tìm thấy username "{topSearch}"
+                  </li>
+                )}
+                {!isSearching &&
+                  topSearchResults.map((u) => {
+                    const isFriend = u.relationshipStatus === 'friends';
+                    const isSent = u.relationshipStatus === 'pending_sent';
+                    const isReceived = u.relationshipStatus === 'pending_received';
+
+                    return (
+                      <li key={u.id} className="topbar-search-item">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <span className={`presence-dot ${u.isOnline ? 'online' : 'offline'}`} />
+                          <div style={{ minWidth: 0 }}>
+                            <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
+                              @{u.username}
+                            </strong>
+                            <div className="muted" style={{ fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.email}</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {isFriend && (
+                            <button
+                              className="primary sm"
+                              onClick={() => {
+                                handleStartDirectChat(u.id);
+                                setTopSearch('');
+                                setActiveView('chat');
+                              }}
+                              title="Nhắn tin trực tiếp 1-1"
+                            >
+                              💬 Nhắn
+                            </button>
+                          )}
+                          {isSent && (
+                            <span className="chip">Đã gửi</span>
+                          )}
+                          {isReceived && (
+                            <button
+                              className="primary sm"
+                              onClick={async () => {
+                                await api.respondFriendRequest(u.requestId, 'accept');
+                                setTopSearch('');
+                                loadChats();
+                              }}
+                            >
+                              Đồng ý
+                            </button>
+                          )}
+                          {!isFriend && !isSent && !isReceived && (
+                            <button
+                              className="ghost sm"
+                              onClick={async () => {
+                                await api.sendFriendRequest(u.id);
+                                setTopSearch('');
+                                alert('Đã gửi lời mời kết bạn!');
+                              }}
+                            >
+                              + Kết bạn
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
+          </div>
+
           <span className="header-right">
             <button
               className="icon-btn"
               onClick={toggleTheme}
-              title={theme === 'dark' ? 'Chuyển sang chế độ sáng' : 'Chuyển sang chế độ tối'}
-              aria-label="Đổi giao diện sáng/tối"
+              title={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}
+              aria-label="Đổi giao diện"
             >
               {theme === 'dark' ? '☀' : '☾'}
             </button>
-            {activeId && (
+            <button
+              className={activeView === 'feed' ? 'icon-btn active' : 'icon-btn'}
+              onClick={() => {
+                setActiveView((v) => (v === 'feed' ? 'chat' : 'feed'));
+                loadFriendsList();
+              }}
+              title="Chuyển chế độ Bảng tin X-Feed"
+              aria-label="X-Feed"
+            >
+              📰
+            </button>
+            <button
+              className={showFriends ? 'icon-btn active' : 'icon-btn'}
+              onClick={() => {
+                setShowFriends((v) => !v);
+                setShowInfo(false);
+              }}
+              title="Bạn bè & Kết nối"
+              aria-label="Bạn bè & Kết nối"
+              style={{ position: 'relative' }}
+            >
+              👥
+              {pendingFriendRequestsCount > 0 && (
+                <span className="badge-count-dot" />
+              )}
+            </button>
+            {activeId && activeView === 'chat' && (
               <button
                 className={showInfo ? 'icon-btn active' : 'icon-btn'}
                 onClick={() => setShowInfo((v) => !v)}
@@ -511,23 +713,9 @@ export default function ChatPage() {
               </button>
             )}
             <span
-              className={online ? 'dot on' : 'dot off'}
-              title={
-                authFailed
-                  ? 'Phiên đăng nhập đã hết hạn, đang chuyển về trang đăng nhập'
-                  : connected
-                    ? 'Đang nhận tin nhắn qua Socket.IO'
-                    : syncOk
-                      ? 'Đang đồng bộ tin nhắn mỗi 3 giây'
-                      : 'Không kết nối được backend'
-              }
-            >
-              {online
-                ? 'trực tuyến'
-                : authFailed
-                  ? 'hết phiên'
-                  : 'đang kết nối...'}
-            </span>
+              className={online ? 'presence-dot online' : 'presence-dot offline'}
+              title={online ? 'Trực tuyến' : 'Ngoại tuyến'}
+            />
           </span>
         </div>
 
@@ -541,33 +729,41 @@ export default function ChatPage() {
         )}
 
         <div className="chat-body">
-          <div className="chat-main">
-            {activeConversation?.status === 'pending' && (
-              <div
-                className="alert warning banner"
-                style={{
-                  marginBottom: 12,
-                  backgroundColor: '#fffbeb',
-                  color: '#b45309',
-                  border: '1px solid #fde68a',
-                  padding: '10px 14px',
-                  borderRadius: 8,
-                }}
-              >
-                ⏳ <strong>Chờ duyệt:</strong> Yêu cầu tham gia đoạn chat này của bạn đang chờ Quản trị viên phê duyệt. Bạn chưa thể xem hoặc gửi tin nhắn.
-              </div>
-            )}
-            <MessageList
-              messages={messagesWithDelete}
-              currentUserId={user?.userId}
-              currentUsername={user?.username}
+          {activeView === 'feed' ? (
+            <XFeedView
+              currentUser={user}
+              friends={friendsList}
+              on={on}
+              off={off}
+              onOpenDirectChat={(friendId) => {
+                handleStartDirectChat(friendId);
+                setActiveView('chat');
+              }}
             />
-            <Composer
-              disabled={!activeId || activeConversation?.status === 'pending'}
-              onSend={handleSend}
-              onImageUpload={handleImageUpload}
-            />
-          </div>
+          ) : (
+            <div className="chat-main">
+              {activeConversation?.status === 'pending' && (
+                <div
+                  className="alert warning banner"
+                  style={{ margin: '12px 20px 0' }}
+                >
+                  <span>
+                    ⏳ <strong>Chờ duyệt:</strong> Yêu cầu tham gia đoạn chat này của bạn đang chờ Quản trị viên phê duyệt. Bạn chưa thể xem hoặc gửi tin nhắn.
+                  </span>
+                </div>
+              )}
+              <MessageList
+                messages={messagesWithDelete}
+                currentUserId={user?.userId}
+                currentUsername={user?.username}
+              />
+              <Composer
+                disabled={!activeId || activeConversation?.status === 'pending'}
+                onSend={handleSend}
+                onImageUpload={handleImageUpload}
+              />
+            </div>
+          )}
 
           {showInfo && activeId && (
             <>
@@ -590,6 +786,34 @@ export default function ChatPage() {
                   setShowInfo(false);
                   await loadChats();
                 }}
+              />
+            </>
+          )}
+
+          {showFriends && (
+            <>
+              <div className="drawer-scrim" onClick={() => setShowFriends(false)} />
+              <FriendsDrawer
+                isOpen={showFriends}
+                onClose={() => setShowFriends(false)}
+                onStartDirectChat={handleStartDirectChat}
+                on={on}
+                off={off}
+                onRequestCountChange={setPendingFriendRequestsCount}
+              />
+            </>
+          )}
+
+          {showFeed && (
+            <>
+              <div className="drawer-scrim" onClick={() => setShowFeed(false)} />
+              <FeedDrawer
+                isOpen={showFeed}
+                onClose={() => setShowFeed(false)}
+                currentUser={user}
+                friends={friendsList}
+                on={on}
+                off={off}
               />
             </>
           )}
@@ -812,12 +1036,12 @@ function ChatInfoDrawer({
           <div className="info-chips">
             <span className="chip">{conversation.type}</span>
             <span className="chip">{conversation.numberMembers} thành viên</span>
-            {isAdmin && <span className="chip" style={{ background: '#3b82f6', color: '#fff' }}>Admin</span>}
-            {conversation.status === 'pending' && <span className="chip warning" style={{ background: '#f59e0b', color: '#fff' }}>Chờ duyệt</span>}
+            {isAdmin && <span className="chip">Admin</span>}
+            {conversation.status === 'pending' && <span className="chip warning">Chờ duyệt</span>}
           </div>
 
           {actionMsg && (
-            <div style={{ padding: '8px 12px', background: '#ecfdf5', color: '#065f46', borderRadius: 6, fontSize: '0.85rem', marginTop: 10 }}>
+            <div className="alert success" style={{ fontSize: '0.85rem' }}>
               {actionMsg}
             </div>
           )}

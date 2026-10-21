@@ -176,8 +176,31 @@ async function getMyChats(req , res) {
     });
 }
 
+async function createDirectChat(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const { targetUserId } = req.body || {};
+
+    const result = await chatService.createOrGetDirectChat(userId , username , targetUserId);
+    if (result.error) {
+        return res.status(result.status_code || 400).json({
+            success : false ,
+            payload : { error : result.error }
+        });
+    }
+
+    return res.status(200).json({
+        success : true ,
+        payload : {
+            message : result.message ,
+            id : result.id
+        }
+    });
+}
+
 module.exports = {
     createChat , 
+    createDirectChat ,
     joinChat ,
     requestJoin ,
     getPendingRequests ,

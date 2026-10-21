@@ -20,7 +20,11 @@
       "dest": "/backend/index.js"
     },
     {
-      "src": "/chat/(.*)",
+      "src": "/chat/conversation(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/chat/message(.*)",
       "dest": "/backend/index.js"
     },
     {

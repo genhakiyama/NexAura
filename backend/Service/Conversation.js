@@ -89,6 +89,111 @@ async function createNewChat(userId , username , conversation_name , converstati
 }
 
 /**
+ * Create or retrieve an existing 1-1 direct conversation with a friend.
+ * Enforces friendship requirement: Only accepted friends can chat 1-1.
+ */
+async function createOrGetDirectChat(userId , username , targetUserIdInput) {
+    const { decryptUserId } = require('../UTIL/UserCrypto');
+    const { isFriend } = require('./Friendship');
+
+    const targetUserId = decryptUserId(targetUserIdInput);
+    if (!targetUserId) {
+        return {
+            status_code : 400 ,
+            error : 'Mã người dùng không hợp lệ.'
+        };
+    }
+
+    if (Number(userId) === Number(targetUserId)) {
+        return {
+            status_code : 400 ,
+            error : 'Không thể tạo cuộc trò chuyện 1-1 với chính mình.'
+        };
+    }
+
+    // Security check: Must be accepted friends
+    const friends = await isFriend(userId , targetUserId);
+    if (!friends) {
+        return {
+            status_code : 403 ,
+            error : 'Chỉ cho phép trò chuyện 1-1 giữa những người đã là bạn bè.'
+        };
+    }
+
+    // Check for an existing direct chat containing both users
+    const myDirectMembers = await ConverMem.findAll({
+        where : { userId , status : 'approved' }
+    });
+
+    const myConvIds = myDirectMembers.map(m => m.conversationId);
+    if (myConvIds.length > 0) {
+        const sharedMem = await ConverMem.findOne({
+            where : {
+                userId : targetUserId ,
+                conversationId : myConvIds ,
+                status : 'approved'
+            }
+        });
+
+        if (sharedMem) {
+            const existingConv = await Conversation.findOne({
+                where : { id : sharedMem.conversationId , type : 'direct' }
+            });
+
+            if (existingConv) {
+                const encryptedId = encryptChatId(existingConv.id);
+                return {
+                    message : 'Đã mở cuộc trò chuyện trực tiếp.' ,
+                    id : encryptedId
+                };
+            }
+        }
+    }
+
+    // Create a new direct chat
+    const targetUser = await User.findByPk(targetUserId);
+    if (!targetUser) {
+        return { status_code : 404 , error : 'Người dùng không tồn tại.' };
+    }
+
+    const chatName = `${username} & ${targetUser.username}`;
+    const newConv = await Conversation.create({
+        name : chatName ,
+        type : 'direct' ,
+        numberMembers : 2
+    });
+
+    await ConverMem.create({
+        userId ,
+        conversationId : newConv.id ,
+        conversationName : chatName ,
+        userRole : 'member' ,
+        status : 'approved'
+    });
+
+    await ConverMem.create({
+        userId : targetUserId ,
+        conversationId : newConv.id ,
+        conversationName : chatName ,
+        userRole : 'member' ,
+        status : 'approved'
+    });
+
+    const encryptedId = encryptChatId(newConv.id);
+
+    room.joinRoom(newConv.id , userId , {
+        action : 'create direct chat' ,
+        message : `${username} đã bắt đầu cuộc trò chuyện với bạn.` ,
+        chatId : encryptedId
+    });
+
+    return {
+        message : 'Đã tạo cuộc trò chuyện trực tiếp thành công.' ,
+        id : encryptedId
+    };
+}
+
+/**
  * Request to join a chat. In group chats, members start as 'pending' until approved by an Admin.
  */
 async function requestJoinChat(username , userId , conversationId) {
@@ -357,6 +462,7 @@ async function joinChat(username , userId , conversationId) {
 
 module.exports = {
     createNewChat ,
+    createOrGetDirectChat ,
     joinChat ,
     requestJoinChat ,
     getPendingRequests ,

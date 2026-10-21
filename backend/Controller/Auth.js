@@ -37,11 +37,13 @@ async function Signup(req , res) {
     }
 };
 
+const RefreshTokenService = require('../Service/RefreshToken');
+const ticketStore = require('../Socket/TicketStore');
+const { encryptUserId } = require('../UTIL/UserCrypto');
+
 async function LogIn(req , res) {
     const {username , email , password} = req.body || {};
 
-    // Login had no try/catch, so any rejection (a bad WHERE value, a database
-    // cold-start failure) became an unhandled 500 instead of a usable message.
     try {
         const isCheck = await Authen.Login(email , username , password);
 
@@ -52,17 +54,34 @@ async function LogIn(req , res) {
             }
         });
 
-        const userId = isCheck.userId
+        const userId = isCheck.userId;
 
-        const Token = jwt.sign({
-            username , email , userId
-        } , process.env.SECRET_KEY , {expiresIn : '1h'});
+        // Generate 15-minute Access Token
+        const accessToken = RefreshTokenService.generateAccessToken({
+            id: userId,
+            username,
+            email
+        });
+
+        // Generate rotating Refresh Token (hashed in DB)
+        const rawRefreshToken = await RefreshTokenService.createRefreshToken(userId);
+
+        // Set HttpOnly, Secure, SameSite cookie
+        res.cookie('refreshToken', rawRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         return res.status(200).json({
             sucess : true , 
             payload : {
                 message : isCheck.message,
-                token : Token
+                token : accessToken,
+                refreshToken : rawRefreshToken,
+                userId : encryptUserId(userId),
+                expiresIn : 900 // 15 mins
             }
         });
     } catch (err) {
@@ -70,6 +89,99 @@ async function LogIn(req , res) {
         return res.status(500).json({
             success : false ,
             payload : { message : 'Đã xảy ra lỗi máy chủ. Vui lòng thử lại.' }
+        });
+    }
+}
+
+async function RefreshAccessToken(req , res) {
+    const rawRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    try {
+        const result = await RefreshTokenService.rotateRefreshToken(rawRefreshToken);
+
+        if (result.error) {
+            res.clearCookie('refreshToken');
+            return res.status(result.statusCode || 401).json({
+                success: false,
+                payload: { message: result.error }
+            });
+        }
+
+        // Set updated refresh token cookie
+        res.cookie('refreshToken', result.refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
+
+        return res.status(200).json({
+            success: true,
+            payload: {
+                token: result.accessToken,
+                refreshToken: result.refreshToken,
+                user: result.user,
+                expiresIn: 900
+            }
+        });
+    } catch (err) {
+        console.error('[Refresh error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { message: 'Lỗi làm mới phiên đăng nhập.' }
+        });
+    }
+}
+
+async function LogOut(req , res) {
+    const rawRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    try {
+        if (rawRefreshToken) {
+            await RefreshTokenService.revokeRefreshToken(rawRefreshToken);
+        }
+        res.clearCookie('refreshToken');
+
+        return res.status(200).json({
+            success: true,
+            payload: { message: 'Đăng xuất thành công.' }
+        });
+    } catch (err) {
+        console.error('[Logout error]', err);
+        res.clearCookie('refreshToken');
+        return res.status(200).json({
+            success: true,
+            payload: { message: 'Đã hoàn tất đăng xuất.' }
+        });
+    }
+}
+
+async function GetWsTicket(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+
+    if (!userId) {
+        return res.status(401).json({
+            success: false,
+            payload: { error: 'Chưa xác thực người dùng.' }
+        });
+    }
+
+    try {
+        const ticket = ticketStore.createTicket(userId, username);
+
+        return res.status(200).json({
+            success: true,
+            payload: {
+                ticket,
+                expiresIn: 30 // 30 seconds TTL
+            }
+        });
+    } catch (err) {
+        console.error('[GetWsTicket error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { error: 'Lỗi cấp vé kết nối WebSocket.' }
         });
     }
 }
@@ -98,5 +210,8 @@ async function VerifyEmail(req , res) {
 module.exports = {
     Signup , 
     LogIn ,
+    RefreshAccessToken ,
+    LogOut ,
+    GetWsTicket ,
     VerifyEmail
 };

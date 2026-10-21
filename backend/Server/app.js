@@ -67,6 +67,44 @@ app.use(morgan('combined' , {stream : accessLogStream}));
     User.hasMany(Image, { foreignKey: 'userId', onDelete: 'CASCADE' });
     Image.belongsTo(User, { foreignKey: 'userId', onDelete: 'CASCADE' });
 
+    //---- REFRESH TOKEN ASSOCIATIONS
+    const RefreshToken = require('../Models/RefreshToken');
+    User.hasMany(RefreshToken, { foreignKey: 'userId', onDelete: 'CASCADE' });
+    RefreshToken.belongsTo(User, { foreignKey: 'userId', onDelete: 'CASCADE' });
+
+    //---- FRIENDSHIP ASSOCIATIONS
+    const Friendship = require('../Models/Friendship');
+    User.hasMany(Friendship, { foreignKey: 'requester_id', as: 'sentFriendRequests', onDelete: 'CASCADE' });
+    User.hasMany(Friendship, { foreignKey: 'addressee_id', as: 'receivedFriendRequests', onDelete: 'CASCADE' });
+    Friendship.belongsTo(User, { foreignKey: 'requester_id', as: 'requester' });
+    Friendship.belongsTo(User, { foreignKey: 'addressee_id', as: 'addressee' });
+
+    //---- FEED & POST ASSOCIATIONS
+    const Post = require('../Models/Post');
+    const PostEditor = require('../Models/PostEditor');
+    const Comment = require('../Models/Comment');
+    const Reaction = require('../Models/Reaction');
+    const SocialNotification = require('../Models/SocialNotification');
+
+    User.hasMany(Post, { foreignKey: 'author_id', as: 'posts', onDelete: 'CASCADE' });
+    Post.belongsTo(User, { foreignKey: 'author_id', as: 'author' });
+
+    Post.hasMany(PostEditor, { foreignKey: 'post_id', as: 'editors', onDelete: 'CASCADE' });
+    PostEditor.belongsTo(Post, { foreignKey: 'post_id' });
+    PostEditor.belongsTo(User, { foreignKey: 'editor_user_id', as: 'editor' });
+    PostEditor.belongsTo(User, { foreignKey: 'granted_by', as: 'granter' });
+
+    Post.hasMany(Comment, { foreignKey: 'post_id', as: 'comments', onDelete: 'CASCADE' });
+    Comment.belongsTo(Post, { foreignKey: 'post_id' });
+    Comment.belongsTo(User, { foreignKey: 'author_id', as: 'author' });
+    Comment.hasMany(Comment, { foreignKey: 'parent_id', as: 'replies', onDelete: 'CASCADE' });
+    Comment.belongsTo(Comment, { foreignKey: 'parent_id', as: 'parent' });
+
+    SocialNotification.belongsTo(User, { foreignKey: 'actor_id', as: 'actor' });
+    SocialNotification.belongsTo(User, { foreignKey: 'recipient_id', as: 'recipient' });
+
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
 app.use(express.json());
 
 // Public readiness probe. Works on both the long-running local server and the
@@ -99,6 +137,20 @@ app.use(async (req , res , next) => {
 
 app.use('/auth' , AuthenHandler);
 app.use('/chat' , isAuth , ChatHandler);
+
+// Friends & Users routes (Authenticated)
+const FriendHandler = require('../Routes/FriendHandler');
+const UserHandler = require('../Routes/UserHandler');
+app.use('/friends' , isAuth , FriendHandler);
+app.use('/users' , isAuth , UserHandler);
+
+// Feed & Social routes (Authenticated)
+const FeedHandler = require('../Routes/FeedHandler');
+app.use('/feed' , isAuth , FeedHandler);
+
+// Single-use WebSocket ticket endpoint
+const AuthController = require('../Controller/Auth');
+app.post('/ws/ticket' , isAuth , AuthController.GetWsTicket);
 
 // Express 5 forwards rejected async handlers here. Without this the browser
 // receives an HTML stack page and the frontend can only report "request fail".

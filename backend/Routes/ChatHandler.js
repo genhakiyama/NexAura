@@ -7,6 +7,7 @@ const router = express.Router();
 
 // Conversations & Memberships
 router.post('/conversation/create' , ChatController.createChat);
+router.post('/conversation/direct' , ChatController.createDirectChat);
 router.post('/conversation/join/:conversationId' , ChatController.joinChat);
 router.post('/conversation/request-join/:conversationId' , ChatController.requestJoin);
 router.get('/conversation/:conversationId/pending-requests' , ChatController.getPendingRequests);

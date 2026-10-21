@@ -19,6 +19,13 @@ function readStoredTheme() {
  */
 export function useTheme() {
   const [theme, setTheme] = useState(() => {
+    // The attribute is the source of truth once App has mounted, so a second
+    // consumer (e.g. ChatPage's toggle button) starts in sync with it instead of
+    // re-deriving from storage and drifting.
+    if (typeof document !== 'undefined') {
+      const applied = document.documentElement.getAttribute('data-theme');
+      if (applied === 'light' || applied === 'dark') return applied;
+    }
     const stored = readStoredTheme();
     if (stored === 'light' || stored === 'dark') return stored;
     if (typeof window !== 'undefined' && window.matchMedia) {

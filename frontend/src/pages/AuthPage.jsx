@@ -37,6 +37,7 @@ export default function AuthPage({ mode }) {
   return (
     <div className="auth-shell">
       <div className="auth-card">
+        <p className="eyebrow">Nexora // Messenger</p>
         <h1 className="brand">Nexora</h1>
         <p className="subtitle">{isSignup ? 'Tạo tài khoản mới' : 'Đăng nhập để tiếp tục'}</p>
 
