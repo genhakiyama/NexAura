@@ -25,9 +25,11 @@ async function Signup(req , res) {
         return res.status(200).json({
             success : true , 
             payload : {
-                message : authen.message
+                message : authen.message,
+                needsVerification : authen.needsVerification,
+                email : authen.email
             }
-        })
+        });
     } catch (err) {
         console.error('[Signup error]' , err);
         return res.status(500).json({
@@ -47,12 +49,16 @@ async function LogIn(req , res) {
     try {
         const isCheck = await Authen.Login(email , username , password);
 
-        if (isCheck.error) return res.status(isCheck.status_code || 400).json({
-            sucess : false , 
-            payload : {
-                message : isCheck.error
-            }
-        });
+        if (isCheck.error) {
+            return res.status(isCheck.status_code || 400).json({
+                success : false , 
+                payload : {
+                    message : isCheck.error,
+                    needsVerification : isCheck.needsVerification || false,
+                    email : isCheck.email || null
+                }
+            });
+        }
 
         const userId = isCheck.userId;
 
@@ -187,10 +193,44 @@ async function GetWsTicket(req , res) {
 }
 
 async function VerifyEmail(req , res) {
-    const {token} = req.query;
+    const { token } = req.query;
     const isCheck = await Email.verifyEmail(token);
+    const baseUrl = Email.resolveBaseUrl();
 
-    if (isCheck.error){
+    // Nếu request đến từ trình duyệt người dùng click vào email
+    const acceptsHtml = req.accepts('html') && !req.xhr && !req.headers.accept?.includes('application/json');
+
+    if (isCheck.error) {
+        if (acceptsHtml) {
+            return res.status(isCheck.status_code || 400).send(`
+                <!DOCTYPE html>
+                <html lang="vi">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Xác thực không thành công | Nexora</title>
+                    <style>
+                        body { margin: 0; padding: 0; background: #0b0f19; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+                        .card { max-width: 440px; margin: 20px; padding: 36px 28px; background: #131b2e; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 20px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+                        .icon-wrap { width: 68px; height: 68px; margin: 0 auto 20px; background: rgba(239, 68, 68, 0.15); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 32px; }
+                        h1 { font-size: 22px; margin: 0 0 12px; font-weight: 700; color: #f87171; }
+                        p { font-size: 14.5px; line-height: 1.6; color: #94a3b8; margin: 0 0 26px; }
+                        .btn { display: inline-block; background: #3b82f6; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 10px; font-weight: 600; font-size: 14.5px; transition: all 0.2s; }
+                        .btn:hover { background: #2563eb; transform: translateY(-1px); }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <div class="icon-wrap">✕</div>
+                        <h1>Xác thực không thành công</h1>
+                        <p>${isCheck.error}</p>
+                        <a href="${baseUrl}/login" class="btn">Đến trang Đăng nhập & Gửi lại mã</a>
+                    </div>
+                </body>
+                </html>
+            `);
+        }
+
         return res.status(isCheck.status_code || 400).json({
             success : false , 
             payload : {
@@ -199,12 +239,101 @@ async function VerifyEmail(req , res) {
         });
     }
 
+    if (acceptsHtml) {
+        return res.status(200).send(`
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Kích hoạt thành công | Nexora</title>
+                <style>
+                    body { margin: 0; padding: 0; background: #0b0f19; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+                    .card { max-width: 440px; margin: 20px; padding: 36px 28px; background: #131b2e; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 20px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+                    .icon-wrap { width: 68px; height: 68px; margin: 0 auto 20px; background: rgba(16, 185, 129, 0.15); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #10b981; font-size: 32px; }
+                    h1 { font-size: 22px; margin: 0 0 12px; font-weight: 700; color: #34d399; }
+                    p { font-size: 14.5px; line-height: 1.6; color: #94a3b8; margin: 0 0 26px; }
+                    .btn { display: inline-block; background: #10b981; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 10px; font-weight: 600; font-size: 14.5px; transition: all 0.2s; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3); }
+                    .btn:hover { background: #059669; transform: translateY(-1px); }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="icon-wrap">✓</div>
+                    <h1>Kích hoạt tài khoản thành công!</h1>
+                    <p>Địa chỉ email của bạn đã được xác thực hoàn tất. Bạn có thể đăng nhập ngay để kết nối và trò chuyện.</p>
+                    <a href="${baseUrl}/login" class="btn">Đăng nhập vào Nexora</a>
+                </div>
+            </body>
+            </html>
+        `);
+    }
+
     return res.status(200).json({
-        sucess : true , 
+        success : true , 
         payload : {
-            message : 'Xac thuc Email thanh cong'
+            message : 'Xác thực Email thành công. Bạn có thể đăng nhập ngay!'
         }
     });
+}
+
+/**
+ * Controller xác thực qua mã OTP 6 số
+ */
+async function VerifyOtp(req , res) {
+    const { email, otp } = req.body || {};
+
+    try {
+        const result = await Email.verifyOtp(email, otp);
+        if (result.error) {
+            return res.status(result.status_code || 400).json({
+                success: false,
+                payload: { message: result.error }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            payload: { message: result.message }
+        });
+    } catch (err) {
+        console.error('[VerifyOtp error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { message: 'Đã xảy ra lỗi máy chủ khi xác thực OTP.' }
+        });
+    }
+}
+
+/**
+ * Controller gửi lại email xác thực (có Rate Limit & cooldown)
+ */
+async function ResendVerification(req , res) {
+    const { email } = req.body || {};
+
+    try {
+        const result = await Email.resendVerification(email);
+        if (result.error) {
+            return res.status(result.status_code || 400).json({
+                success: false,
+                payload: { message: result.error }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            payload: {
+                message: result.message,
+                remainingSends: result.remainingSends
+            }
+        });
+    } catch (err) {
+        console.error('[ResendVerification error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { message: 'Đã xảy ra lỗi máy chủ khi gửi lại email.' }
+        });
+    }
 }
 
 module.exports = {
@@ -213,5 +342,7 @@ module.exports = {
     RefreshAccessToken ,
     LogOut ,
     GetWsTicket ,
-    VerifyEmail
+    VerifyEmail,
+    VerifyOtp,
+    ResendVerification
 };

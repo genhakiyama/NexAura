@@ -13,7 +13,14 @@ const User = sequelize.define('User' , {
     password : DataTypes.STRING, 
     isVerified : DataTypes.BOOLEAN , 
     verificationToken : DataTypes.STRING , 
-    verificationExpire : DataTypes.DATE
+    verificationExpire : DataTypes.DATE,
+    verificationOtp : DataTypes.STRING,
+    resendCount : {
+        type: DataTypes.INTEGER,
+        defaultValue: 0
+    },
+    lastResendAt : DataTypes.DATE,
+    resendLockUntil : DataTypes.DATE
 } , {
     tableName: 'users' 
 });

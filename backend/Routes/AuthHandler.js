@@ -7,6 +7,8 @@ const router = express.Router();
 
 router.post('/signup' , authRateLimiter , Auth.Signup);
 router.post('/login' , authRateLimiter , Auth.LogIn);
+router.post('/verify-otp' , Auth.VerifyOtp);
+router.post('/resend-verification' , authRateLimiter , Auth.ResendVerification);
 router.post('/refresh' , Auth.RefreshAccessToken);
 router.post('/logout' , Auth.LogOut);
 router.post('/ws/ticket' , isAuth , Auth.GetWsTicket);

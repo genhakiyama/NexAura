@@ -514,6 +514,120 @@ textarea {
 
 .auth-card .switch a:hover { color: var(--accent); }
 
+/* Email & OTP Verification UI */
+.auth-verify-badge {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--surface-dim);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.auth-verify-badge .verify-icon {
+  font-size: 22px;
+  color: var(--accent);
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.auth-verify-badge .verify-desc {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.auth-verify-badge .verify-target-email {
+  display: block;
+  font-size: 14.5px;
+  color: var(--text);
+  font-weight: 700;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.otp-input {
+  font-family: var(--font-mono) !important;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+  letter-spacing: 10px !important;
+  text-align: center !important;
+  padding: 14px 10px !important;
+  background: var(--surface-dim) !important;
+  border: 2px solid var(--line) !important;
+  border-radius: var(--r-md) !important;
+  color: var(--accent) !important;
+  transition: all 0.2s ease !important;
+}
+
+.otp-input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2) !important;
+  outline: none !important;
+}
+
+.resend-section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line);
+  text-align: center;
+}
+
+.resend-section .resend-info {
+  font-size: 12.5px;
+  color: var(--text-mute);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.resend-btn {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.resend-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.resend-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: var(--line);
+  color: var(--text-mute);
+}
+
+.remaining-badge {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  margin-top: 8px;
+  font-family: var(--font-mono);
+}
+
+.text-link-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px;
+}
+
+.text-link-btn:hover {
+  color: var(--text);
+}
+
 /* Boot screen */
 .boot-note {
   display: inline-flex;

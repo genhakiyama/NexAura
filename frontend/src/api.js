@@ -221,6 +221,10 @@ export const api = {
     request('POST', '/auth/signup', { email, username, password }, { auth: false }),
   login: ({ email, username, password }) =>
     request('POST', '/auth/login', { email, username, password }, { auth: false }),
+  verifyOtp: ({ email, otp }) =>
+    request('POST', '/auth/verify-otp', { email, otp }, { auth: false }),
+  resendVerification: ({ email }) =>
+    request('POST', '/auth/resend-verification', { email }, { auth: false }),
 
   // ---- Conversations (HTTP) ----
   createChat: ({ conversation_name, conversation_type }) =>

@@ -61,10 +61,10 @@ async function SignUp(email , username , password) {
             };
         }
 
-        // 5. Chuẩn bị token xác thực và gửi email xác thực qua Gmail
-        // Chỉ cho phép đăng ký thành công khi Gmail gửi tin thành công
+        // 5. Chuẩn bị token xác thực + mã OTP 6 số và gửi email xác thực qua Gmail
         const {token , hashedToken} = Token.TokenGeneration();
-        const mailResult = await EmailService.SendVerification(cleanEmail , token);
+        const {otp , hashedOtp} = Token.OtpGeneration();
+        const mailResult = await EmailService.SendVerification(cleanEmail , token, otp);
         if (!mailResult || !mailResult.success) {
             return {
                 status_code : 400 ,
@@ -72,7 +72,7 @@ async function SignUp(email , username , password) {
             };
         }
 
-        // 6. Sau khi Gmail gửi tin thành công, lưu tài khoản vào cơ sở dữ liệu
+        // 6. Sau khi Gmail gửi tin thành công, lưu tài khoản vào cơ sở dữ liệu (thời hạn 15 phút, single-use)
         const hashedpassword = await brcrypt.hash(password , 12);
         await User.create({
             email : cleanEmail ,
@@ -80,11 +80,16 @@ async function SignUp(email , username , password) {
             password : hashedpassword , 
             isVerified : false , 
             verificationToken : hashedToken,
-            verificationExpire : new Date(Date.now() + 15 * 60 * 1000)
+            verificationOtp : hashedOtp,
+            verificationExpire : new Date(Date.now() + 15 * 60 * 1000),
+            resendCount : 0,
+            lastResendAt : new Date()
         });
 
         return {
-            message : 'Đăng ký thành công! Vui lòng kiểm tra hộp thư email để kích hoạt tài khoản.'
+            message : 'Đăng ký thành công! Vui lòng kiểm tra email để lấy mã OTP hoặc bấm liên kết xác thực.',
+            needsVerification : true,
+            email : cleanEmail
         };
 }   
 
@@ -98,7 +103,7 @@ async function Login(email  , username , password){
         }
     }
 
-    const user = await User.findOne({where : {email : email , username : username}});
+    const user = await User.findOne({where : {email : email.trim().toLowerCase() , username : username.trim()}});
     if (!user) {
         return {
             status_code : authErr.UserNotFoundError.defaultStatusCode,
@@ -109,7 +114,9 @@ async function Login(email  , username , password){
     if (!user.isVerified) {
         return {
             status_code : 403,
-            error : 'Tài khoản chưa xác thực email. Hãy mở link xác thực trong email đăng kí (kiểm tra cả thư rác).'
+            error : 'Tài khoản chưa được kích hoạt. Vui lòng nhập mã OTP hoặc bấm liên kết xác thực trong email của bạn.',
+            needsVerification : true,
+            email : user.email
         }
     }
 
