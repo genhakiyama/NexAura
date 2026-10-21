@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "build": "node build.js",
+    "vercel-build": "node build.js",
+    "db:reset": "node scripts/reset-db.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

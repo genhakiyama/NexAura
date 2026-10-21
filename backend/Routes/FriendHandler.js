@@ -9,6 +9,9 @@ router.get('/requests', FriendshipController.getRequests);
 router.patch('/requests/:id', FriendshipController.respondRequest);
 router.delete('/requests/:id', FriendshipController.cancelRequest);
 router.delete('/:friendId', FriendshipController.unfriend);
+// Search users / friends
+router.get('/search', FriendshipController.searchUsers);
+router.post('/search', FriendshipController.searchUsers);
 router.get('/', FriendshipController.getFriends);
 
 module.exports = router;

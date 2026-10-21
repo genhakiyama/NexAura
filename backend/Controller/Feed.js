@@ -243,6 +243,38 @@ async function markNotificationAsRead(req, res) {
     }
 }
 
+async function uploadAttachment(req, res) {
+    const userId = req.userId;
+    const file = req.file;
+
+    if (!file || !file.buffer) {
+        return res.status(400).json({
+            success: false,
+            payload: { error: 'Vui lòng chọn tệp hoặc ảnh để tải lên.' }
+        });
+    }
+
+    try {
+        const result = await FeedService.uploadFeedAttachment(userId, file);
+        if (result.error) {
+            return res.status(result.statusCode || 400).json({
+                success: false,
+                payload: { error: result.error }
+            });
+        }
+        return res.status(200).json({
+            success: true,
+            payload: result
+        });
+    } catch (err) {
+        console.error('[uploadAttachment feed error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { error: err.message || 'Lỗi tải tệp lên bảng tin.' }
+        });
+    }
+}
+
 module.exports = {
     createPost,
     getFeed,
@@ -256,5 +288,6 @@ module.exports = {
     deleteComment,
     toggleReaction,
     getNotifications,
-    markNotificationAsRead
+    markNotificationAsRead,
+    uploadAttachment
 };

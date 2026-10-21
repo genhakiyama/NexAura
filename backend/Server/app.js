@@ -27,6 +27,13 @@ app.use(helmet({
 }));
 app.use(morgan('combined' , {stream : accessLogStream}));
 
+// Serve static uploaded files (with automatic directory creation)
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
+
 //---- ROUTES 
     const AuthenHandler = require('../Routes/AuthHandler');
     const isAuth = require('../Middleware/is-auth');
@@ -105,7 +112,8 @@ app.use(morgan('combined' , {stream : accessLogStream}));
 
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: '250mb' }));
+app.use(express.urlencoded({ extended: true, limit: '250mb' }));
 
 // Public readiness probe. Works on both the long-running local server and the
 // Vercel function, and reports which runtime answered.

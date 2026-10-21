@@ -193,7 +193,8 @@ async function createDirectChat(req , res) {
         success : true ,
         payload : {
             message : result.message ,
-            id : result.id
+            id : result.id,
+            conversation : { id : result.id }
         }
     });
 }

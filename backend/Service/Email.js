@@ -46,20 +46,46 @@ function resolveBaseUrl() {
 async function SendVerification(email , token) {
     const link = `${resolveBaseUrl()}/auth/verify-Email?token=${token}`;
     try {
-        return await transporter.sendMail({
-            from : process.env.EMAIL_USER ,
+        const info = await transporter.sendMail({
+            from : `"Nexora Messenger" <${process.env.EMAIL_USER}>` ,
             to : email ,
-            subject : "Verify your email" ,
+            subject : "Xác thực tài khoản Nexora của bạn" ,
             html : `
-                <h2>Welcome to Home!</h2>
-                <p>Please click the link below to verify your email:</p>
-                <a href="${link}">Verify Email</a>
-                <p>This link expires in 15 minutes.</p>
+                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+                    <div style="margin-bottom: 20px;">
+                        <span style="font-weight: 800; font-size: 20px; letter-spacing: -0.02em; color: #0f172a;">NEXORA</span>
+                    </div>
+                    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">Chào mừng bạn đến với Nexora!</h2>
+                    <p style="color: #475569; font-size: 15px; line-height: 1.6;">
+                        Cảm ơn bạn đã đăng ký tài khoản. Vui lòng bấm vào nút bên dưới để kích hoạt tài khoản của bạn:
+                    </p>
+                    <div style="margin: 28px 0;">
+                        <a href="${link}" style="background: #111827; color: #ffffff; padding: 12px 26px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14.5px; display: inline-block;">
+                            Xác thực tài khoản
+                        </a>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12.5px; line-height: 1.5; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+                        Liên kết có hiệu lực trong 15 phút. Nếu bạn không yêu cầu tạo tài khoản, vui lòng bỏ qua thư này.
+                    </p>
+                </div>
             `
         });
+
+        if (info.rejected && info.rejected.length > 0) {
+            return {
+                success: false,
+                error: 'Máy chủ thư từ chối gửi tới địa chỉ này. Email có thể không tồn tại.'
+            };
+        }
+
+        return { success: true, info };
     } catch (err) {
         console.error('[SendVerification failed]' , err.message);
-        return { rejected : true };
+        let errorMsg = 'Không thể gửi email xác thực lúc này. Vui lòng thử lại sau.';
+        if (err.responseCode === 550 || err.message?.includes('5.1.1') || err.message?.includes('does not exist')) {
+            errorMsg = 'Địa chỉ email này không tồn tại hoặc không thể nhận thư.';
+        }
+        return { success: false, error: errorMsg };
     }
 }
 

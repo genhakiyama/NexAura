@@ -6,18 +6,20 @@ const authErr = require('../Errors/Authen');
 
 const EmailService = require('./Email');
 const Token = require('../UTIL/Token');
-const { error } = require('console');
+const { validateEmailAuthenticity } = require('../UTIL/EmailDetector');
 
 async function SignUp(email , username , password) {
-        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+        // 1. Kiểm tra phát hiện email ảo, kiểm tra tên miền MX và xác thực hòm thư Gmail
+        const emailCheck = await validateEmailAuthenticity(email, process.env.EMAIL_USER);
+        if (!emailCheck.valid) {
             return {
                 status_code : 400 ,
-                error : 'Email không hợp lệ.'
+                error : emailCheck.error
             };
         }
+        const cleanEmail = emailCheck.email;
 
-        // A missing username/password used to reach Sequelize and throw
-        // `WHERE parameter "username" has invalid "undefined" value` -> 500.
+        // 2. Kiểm tra tính hợp lệ của username & password
         if (!username || typeof username !== 'string' || !username.trim()) {
             return {
                 status_code : 400 ,
@@ -31,9 +33,12 @@ async function SignUp(email , username , password) {
             };
         }
 
+        const cleanUsername = username.trim();
+
+        // 3. Kiểm tra xem username đã tồn tại chưa
         const existingUser = await User.findOne({
             where : {
-                username : username
+                username : cleanUsername
             }
         });
         if (existingUser) {   
@@ -42,23 +47,45 @@ async function SignUp(email , username , password) {
                 error : authErr.UserAlreadyExistsError.defaultMessage
             };
         }
-        const hashedpassword = await brcrypt.hash(password , 12);
+
+        // 4. Kiểm tra xem email đã được đăng ký tài khoản khác chưa
+        const existingEmail = await User.findOne({
+            where : {
+                email : cleanEmail
+            }
+        });
+        if (existingEmail) {
+            return {
+                status_code : 409 ,
+                error : 'Địa chỉ email này đã được sử dụng cho một tài khoản khác.'
+            };
+        }
+
+        // 5. Chuẩn bị token xác thực và gửi email xác thực qua Gmail
+        // Chỉ cho phép đăng ký thành công khi Gmail gửi tin thành công
         const {token , hashedToken} = Token.TokenGeneration();
+        const mailResult = await EmailService.SendVerification(cleanEmail , token);
+        if (!mailResult || !mailResult.success) {
+            return {
+                status_code : 400 ,
+                error : mailResult?.error || 'Gmail không thể gửi thư tới địa chỉ này. Email có thể không tồn tại.'
+            };
+        }
+
+        // 6. Sau khi Gmail gửi tin thành công, lưu tài khoản vào cơ sở dữ liệu
+        const hashedpassword = await brcrypt.hash(password , 12);
         await User.create({
-            email , username , password : hashedpassword , 
+            email : cleanEmail ,
+            username : cleanUsername ,
+            password : hashedpassword , 
             isVerified : false , 
             verificationToken : hashedToken,
             verificationExpire : new Date(Date.now() + 15 * 60 * 1000)
         });
-        // Account is already created; a failed verification email must NOT break signup.
-        try {
-            await EmailService.SendVerification(email , token);
-        } catch (err) {
-            console.error('[signup email failed]' , err.message);
-        }
+
         return {
-            message : 'Đăng kí thành công - Làm ơn check Email'
-        }
+            message : 'Đăng ký thành công! Vui lòng kiểm tra hộp thư email để kích hoạt tài khoản.'
+        };
 }   
 
 async function Login(email  , username , password){

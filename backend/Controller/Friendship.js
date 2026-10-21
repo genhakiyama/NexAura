@@ -2,19 +2,40 @@ const FriendshipService = require('../Service/Friendship');
 
 async function searchUsers(req, res) {
     const userId = req.userId;
-    const query = req.query.q;
+    const query = (
+        req.query?.q ||
+        req.query?.query ||
+        req.query?.search ||
+        req.query?.keyword ||
+        req.query?.username ||
+        req.query?.email ||
+        req.body?.q ||
+        req.body?.query ||
+        req.body?.search ||
+        req.body?.username ||
+        req.body?.email ||
+        ''
+    );
 
     try {
         const result = await FriendshipService.searchUsers(userId, query);
+        const usersList = Array.isArray(result) ? result : (result?.users || []);
         return res.status(200).json({
             success: true,
-            payload: result
+            users: usersList,
+            data: usersList,
+            payload: {
+                users: usersList,
+                ...(Array.isArray(result) ? {} : result)
+            }
         });
     } catch (err) {
         console.error('[searchUsers error]', err);
         return res.status(500).json({
             success: false,
-            payload: { error: 'Lỗi tìm kiếm người dùng.' }
+            users: [],
+            data: [],
+            payload: { error: 'Lỗi tìm kiếm người dùng.', users: [] }
         });
     }
 }

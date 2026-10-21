@@ -8,6 +8,7 @@ const Friendship = require('../Models/Friendship');
 const User = require('../Models/User');
 const { encryptUserId, decryptUserId } = require('../UTIL/UserCrypto');
 const room = require('../Socket/RoomManager');
+const { uploadImage, uploadFileToStorage } = require('./Upload');
 
 /**
  * Kiểm tra xem người dùng có quyền CHỈNH SỬA bài đăng hay không.
@@ -62,11 +63,13 @@ async function getFriendUserIds(userId) {
  * 1. Tạo bài đăng mới.
  */
 async function createPost(userId, { content, mediaUrls = [], visibility = 'friends' }) {
-    if (!content || typeof content !== 'string' || !content.trim()) {
-        return { statusCode: 400, error: 'Nội dung bài viết không được để trống.' };
+    const trimmedContent = typeof content === 'string' ? content.trim() : '';
+    const hasMedia = Array.isArray(mediaUrls) && mediaUrls.length > 0;
+    if (!trimmedContent && !hasMedia) {
+        return { statusCode: 400, error: 'Vui lòng nhập nội dung hoặc đính kèm ảnh/tệp.' };
     }
 
-    if (content.length > 5000) {
+    if (trimmedContent.length > 5000) {
         return { statusCode: 400, error: 'Nội dung bài viết vượt quá giới hạn 5000 ký tự.' };
     }
 
@@ -75,7 +78,7 @@ async function createPost(userId, { content, mediaUrls = [], visibility = 'frien
 
     const post = await Post.create({
         author_id: userId,
-        content: content.trim(),
+        content: trimmedContent,
         media_urls: Array.isArray(mediaUrls) ? mediaUrls : [],
         visibility: postVisibility
     });
@@ -235,14 +238,16 @@ async function updatePost(userId, postId, { content, mediaUrls, visibility }) {
     }
 
     const updates = {};
+    const finalMedia = mediaUrls !== undefined ? mediaUrls : (post.media_urls || []);
     if (content !== undefined) {
-        if (!content.trim()) {
-            return { statusCode: 400, error: 'Nội dung bài viết không được để trống.' };
+        const trimmed = typeof content === 'string' ? content.trim() : '';
+        if (!trimmed && (!Array.isArray(finalMedia) || finalMedia.length === 0)) {
+            return { statusCode: 400, error: 'Bài viết cần có nội dung hoặc đính kèm ảnh/tệp.' };
         }
-        if (content.length > 5000) {
+        if (trimmed.length > 5000) {
             return { statusCode: 400, error: 'Nội dung bài viết vượt quá 5000 ký tự.' };
         }
-        updates.content = content.trim();
+        updates.content = trimmed;
     }
 
     if (mediaUrls !== undefined && Array.isArray(mediaUrls)) {
@@ -723,6 +728,42 @@ async function markNotificationAsRead(userId, notificationId) {
     return { success: true };
 }
 
+/**
+ * 8. Tải tệp/ảnh đính kèm cho bài viết trên Bảng tin.
+ */
+async function uploadFeedAttachment(userId, file) {
+    if (!file || !file.buffer) {
+        return { statusCode: 400, error: 'Không có dữ liệu tệp để tải lên.' };
+    }
+
+    const MAX_SIZE = 200 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+        return { statusCode: 400, error: 'Dung lượng tệp/video không được vượt quá 200MB.' };
+    }
+
+    const isImage = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype);
+    const isVideo = file.mimetype?.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)$/i.test(file.originalname || '');
+    let uploadResult;
+
+    if (isImage) {
+        uploadResult = await uploadImage(file, `feed_${userId}`);
+    } else {
+        uploadResult = await uploadFileToStorage(file, `feed_${userId}`);
+    }
+
+    let detectedType = 'file';
+    if (isImage) detectedType = 'image';
+    else if (isVideo) detectedType = 'video';
+
+    return {
+        statusCode: 200,
+        url: uploadResult.publicUrl,
+        type: detectedType,
+        name: file.originalname,
+        size: file.size
+    };
+}
+
 module.exports = {
     canEditPost,
     canDeletePost,
@@ -738,5 +779,6 @@ module.exports = {
     deleteComment,
     toggleReaction,
     getNotifications,
-    markNotificationAsRead
+    markNotificationAsRead,
+    uploadFeedAttachment
 };

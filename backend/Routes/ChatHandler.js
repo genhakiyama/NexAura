@@ -1,6 +1,6 @@
 const ChatController = require('../Controller/Conversation');
 const MessageController = require('../Controller/Message');
-const upload = require('../Middleware/upload');
+const { upload, uploadAnyFile } = require('../Middleware/upload');
 const express = require('express');
 
 const router = express.Router();
@@ -20,6 +20,7 @@ router.delete('/conversation/:conversationId' , MessageController.deleteChat);
 // Messages & Media
 router.post('/message/send' , MessageController.sendMessage);
 router.post('/message/upload' , upload.single('image') , MessageController.uploadImage);
+router.post('/message/upload-file' , uploadAnyFile.single('file') , MessageController.uploadFile);
 router.delete('/message/delete' , MessageController.deleteMessage);
 router.get('/conversation/:conversationId/messages' , MessageController.getMessages);
 router.get('/conversation/:conversationId/media' , MessageController.getSharedMedia);

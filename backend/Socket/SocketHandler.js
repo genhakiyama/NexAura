@@ -110,11 +110,73 @@ module.exports = (io) => {
       }
     });
 
+    // Typing indicator events (Locket-style live typing)
+    client.on('typing_start', (data) => {
+      if (!checkRateLimit()) return;
+      const conversationId = typeof data === 'string' ? data : data?.conversationId;
+      if (!conversationId) return;
+
+      const realId = decryptChatId(conversationId);
+      const isJoined =
+        client.rooms.has(`conversation:${conversationId}`) ||
+        (realId && client.rooms.has(`conversation:${realId}`));
+      if (!isJoined) return;
+
+      const rooms = [`conversation:${conversationId}`];
+      if (realId && String(realId) !== String(conversationId)) {
+        rooms.push(`conversation:${realId}`);
+      }
+
+      client.to(rooms).emit('user_typing', {
+        conversationId,
+        userId: encryptUserId(userId),
+        rawUserId: userId,
+        username,
+        isTyping: true
+      });
+    });
+
+    client.on('typing_stop', (data) => {
+      if (!checkRateLimit()) return;
+      const conversationId = typeof data === 'string' ? data : data?.conversationId;
+      if (!conversationId) return;
+
+      const realId = decryptChatId(conversationId);
+      const isJoined =
+        client.rooms.has(`conversation:${conversationId}`) ||
+        (realId && client.rooms.has(`conversation:${realId}`));
+      if (!isJoined) return;
+
+      const rooms = [`conversation:${conversationId}`];
+      if (realId && String(realId) !== String(conversationId)) {
+        rooms.push(`conversation:${realId}`);
+      }
+
+      client.to(rooms).emit('user_typing', {
+        conversationId,
+        userId: encryptUserId(userId),
+        rawUserId: userId,
+        username,
+        isTyping: false
+      });
+    });
+
     client.on('leave_room', (conversationId) => {
       if (!checkRateLimit()) return;
       if (!conversationId) return;
-      client.leave(`conversation:${conversationId}`);
       const realId = decryptChatId(conversationId);
+      const rooms = [`conversation:${conversationId}`];
+      if (realId && String(realId) !== String(conversationId)) {
+        rooms.push(`conversation:${realId}`);
+      }
+      client.to(rooms).emit('user_typing', {
+        conversationId,
+        userId: encryptUserId(userId),
+        rawUserId: userId,
+        username,
+        isTyping: false
+      });
+      client.leave(`conversation:${conversationId}`);
       if (realId) client.leave(`conversation:${realId}`);
     });
 

@@ -35,35 +35,73 @@ async function isFriend(userA, userB) {
  * Search users by username or email.
  * Includes relationship status with the requesting user and online presence.
  */
-async function searchUsers(currentUserId, query) {
+async function searchUsers(currentUserIdInput, query) {
     const q = typeof query === 'string' ? query.trim() : '';
     if (!q) {
         return { users: [] };
     }
 
+    const currentUserId = Number(currentUserIdInput) || decryptUserId(currentUserIdInput);
+    if (!currentUserId) {
+        return { users: [] };
+    }
+
+    // Strip leading '@' if user searched with '@username'
+    const cleanQ = q.startsWith('@') ? q.slice(1).trim() : q;
+    if (!cleanQ) {
+        return { users: [] };
+    }
+
+    // Escape special SQL LIKE characters to prevent unintended wildcard matching
+    const escapedQ = cleanQ.replace(/[%_\\]/g, '\\$&');
+    const searchPattern = `%${escapedQ}%`;
+
+    const isPostgres = User.sequelize && typeof User.sequelize.getDialect === 'function'
+        ? User.sequelize.getDialect() === 'postgres'
+        : true;
+    const matchOp = isPostgres && Op.iLike ? Op.iLike : Op.like;
+
     const foundUsers = await User.findAll({
         where: {
             id: { [Op.ne]: currentUserId },
             [Op.or]: [
-                { username: { [Op.iLike || Op.like]: `%${q}%` } },
-                { email: { [Op.iLike || Op.like]: `%${q}%` } }
+                { username: { [matchOp]: searchPattern } },
+                { email: { [matchOp]: searchPattern } }
             ]
         },
         attributes: ['id', 'username', 'email'],
         limit: 30
     });
 
-    const results = [];
-    for (const u of foundUsers) {
-        // Find existing relationship
-        const rel = await Friendship.findOne({
-            where: {
-                [Op.or]: [
-                    { requester_id: currentUserId, addressee_id: u.id },
-                    { requester_id: u.id, addressee_id: currentUserId }
-                ]
-            }
-        });
+    if (foundUsers.length === 0) {
+        return { users: [] };
+    }
+
+    // Batch query friendships to eliminate N+1 query problem
+    const targetUserIds = foundUsers.map(u => u.id);
+    const friendships = await Friendship.findAll({
+        where: {
+            [Op.or]: [
+                { requester_id: currentUserId, addressee_id: { [Op.in]: targetUserIds } },
+                { requester_id: { [Op.in]: targetUserIds }, addressee_id: currentUserId }
+            ]
+        }
+    });
+
+    const friendshipMap = new Map();
+    for (const rel of friendships) {
+        const otherId = rel.requester_id === currentUserId ? rel.addressee_id : rel.requester_id;
+        friendshipMap.set(otherId, rel);
+    }
+
+    const lowerCleanQ = cleanQ.toLowerCase();
+
+    // Calculate relevance score:
+    // 100: Exact username or email match
+    //  75: Username or email starts with search term
+    //  50: Contains search term
+    const scored = foundUsers.map(u => {
+        const rel = friendshipMap.get(u.id);
 
         let relationshipStatus = 'none';
         let requestId = null;
@@ -79,17 +117,32 @@ async function searchUsers(currentUserId, query) {
             }
         }
 
-        results.push({
+        const usernameLower = (u.username || '').toLowerCase();
+        const emailLower = (u.email || '').toLowerCase();
+
+        let score = 50;
+        if (usernameLower === lowerCleanQ || emailLower === lowerCleanQ) {
+            score = 100;
+        } else if (usernameLower.startsWith(lowerCleanQ) || emailLower.startsWith(lowerCleanQ)) {
+            score = 75;
+        }
+
+        return {
             id: encryptUserId(u.id),
             rawId: u.id,
             username: u.username,
             email: u.email,
             relationshipStatus,
             requestId,
-            isOnline: isUserOnline(u.id)
-        });
-    }
+            isOnline: isUserOnline(u.id),
+            _score: score
+        };
+    });
 
+    // Sort by relevance score descending
+    scored.sort((a, b) => b._score - a._score);
+
+    const results = scored.map(({ _score, ...rest }) => rest);
     return { users: results };
 }
 

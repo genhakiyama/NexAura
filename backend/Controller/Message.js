@@ -76,6 +76,57 @@ async function uploadImage(req , res) {
     }
 }
 
+async function uploadFile(req , res) {
+    const userId = req.userId;
+    const username = req.username;
+    const conversationId = req.body.conversationId;
+
+    if (!conversationId) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'conversationId is required.' }
+        });
+    }
+
+    const file = req.file;
+    if (!file || !file.buffer) {
+        return res.status(400).json({
+            success : false ,
+            payload : { error : 'Vui lòng chọn một tệp để tải lên.' }
+        });
+    }
+
+    try {
+        const result = await MessageService.sendFileMessage(
+            userId , username , conversationId , file
+        );
+
+        if (result.error) {
+            return res.status(result.status_code || 400).json({
+                success : false ,
+                payload : { error : result.error }
+            });
+        }
+
+        return res.status(200).json({
+            success : true ,
+            payload : {
+                message : result.message ,
+                messageId : result.messageId ,
+                fileUrl : result.fileUrl ,
+                fileName : result.fileName ,
+                fileSize : result.fileSize
+            }
+        });
+    } catch (err) {
+        console.error('[uploadFile controller]' , err);
+        return res.status(500).json({
+            success : false ,
+            payload : { error : err.message || 'Lỗi gửi tệp.' }
+        });
+    }
+}
+
 async function deleteMessage(req , res) {
     const userId = req.userId;
     const username = req.username;
@@ -176,6 +227,7 @@ async function getSharedMedia(req , res) {
 module.exports = {
     sendMessage , 
     uploadImage ,
+    uploadFile ,
     deleteMessage ,
     getMessages ,
     leaveChat ,

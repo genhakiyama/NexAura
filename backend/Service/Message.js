@@ -10,7 +10,7 @@ const messageErr = require('../Errors/Message');
 const chatErr = require('../Errors/Chat');
 
 const room = require('../Socket/RoomManager');
-const { uploadImage } = require('./Upload');
+const { uploadImage, uploadFileToStorage } = require('./Upload');
 const { encryptChatId, decryptChatId } = require('../UTIL/ChatCrypto');
 
 async function isMember(userId , conversationId){
@@ -192,6 +192,73 @@ async function sendImageMessage(senderId , username , conversationId , file) {
         message : 'Ảnh đã gửi' ,
         messageId : message.id ,
         imageUrl
+    };
+}
+
+async function sendFileMessage(senderId , username , conversationId , file) {
+    if (!file || !file.buffer) {
+        return {
+            status_code : 400 ,
+            error : 'Vui lòng đính kèm một tệp hợp lệ.'
+        };
+    }
+
+    const MAX_FILE_SIZE = 25 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+        return {
+            status_code : messageErr.AttachmentTooLargeError?.defaultStatusCode || 400 ,
+            error : 'Tệp vượt quá dung lượng cho phép (tối đa 25MB).'
+        };
+    }
+
+    const member = await isMember(senderId , conversationId);
+    if (member.error) return member;
+
+    const id = member.realConversationId;
+    const encryptedId = member.encryptedChatId;
+
+    let uploadResult;
+    try {
+        uploadResult = await uploadFileToStorage(file , id);
+    } catch (err) {
+        console.error('[sendFileMessage] upload error:' , err.message);
+        return {
+            status_code : err.statusCode || 500 ,
+            error : `Lỗi lưu trữ tệp: ${err.message}`
+        };
+    }
+
+    const fileUrl = uploadResult.publicUrl;
+    const filePayload = JSON.stringify({
+        url: fileUrl,
+        name: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype
+    });
+
+    const message = await Message.create({
+        type : 'file' ,
+        status : 'sent' ,
+        content : filePayload ,
+        userId : senderId ,
+        conversationId : id
+    });
+
+    room.sendToRoom(id , {
+        id : message.id ,
+        from : username ,
+        message : filePayload ,
+        type : 'file' ,
+        chatId : encryptedId ,
+        createdAt : message.createdAt
+    });
+
+    return {
+        message : 'Tệp đã gửi' ,
+        messageId : message.id ,
+        fileUrl ,
+        fileName : file.originalname ,
+        fileSize : file.size
     };
 }
 
@@ -440,6 +507,7 @@ async function getSharedMedia(userId , conversationId) {
 module.exports = {
     sendMessage , 
     sendImageMessage ,
+    sendFileMessage ,
     deleteMessage ,
     getMessages ,
     leaveChat ,
