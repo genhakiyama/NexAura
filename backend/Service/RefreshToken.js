@@ -46,14 +46,30 @@ async function createRefreshToken(userId) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 
-    await RefreshToken.create({
-        userId,
-        tokenHash,
-        family,
-        expiresAt,
-        sessionStartedAt: now,
-        isRevoked: false
-    });
+    try {
+        await RefreshToken.create({
+            userId,
+            tokenHash,
+            family,
+            expiresAt,
+            sessionStartedAt: now,
+            isRevoked: false
+        });
+    } catch (err) {
+        // Nếu DB sản xuất chưa kịp có cột sessionStartedAt (lỗi 42703) -> ghi nhận mà không truyền cột này
+        if (err.parent?.code === '42703' || err.message?.includes('sessionStartedAt')) {
+            console.warn('[RefreshToken] DB thiếu cột sessionStartedAt, tự động fallback an toàn.');
+            await RefreshToken.create({
+                userId,
+                tokenHash,
+                family,
+                expiresAt,
+                isRevoked: false
+            }, { fields: ['userId', 'tokenHash', 'family', 'expiresAt', 'isRevoked'] });
+        } else {
+            throw err;
+        }
+    }
 
     // Dọn lười theo xác suất (2% cơ hội mỗi lần login)
     maybeLazyCleanup();
@@ -131,14 +147,28 @@ async function rotateRefreshToken(rawToken) {
     const newTokenHash = hashToken(newRawToken);
     const newExpiresAt = new Date(now.getTime() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 
-    await RefreshToken.create({
-        userId: user.id,
-        tokenHash: newTokenHash,
-        family: record.family,
-        expiresAt: newExpiresAt,
-        sessionStartedAt: sessionStart,
-        isRevoked: false
-    });
+    try {
+        await RefreshToken.create({
+            userId: user.id,
+            tokenHash: newTokenHash,
+            family: record.family,
+            expiresAt: newExpiresAt,
+            sessionStartedAt: sessionStart,
+            isRevoked: false
+        });
+    } catch (err) {
+        if (err.parent?.code === '42703' || err.message?.includes('sessionStartedAt')) {
+            await RefreshToken.create({
+                userId: user.id,
+                tokenHash: newTokenHash,
+                family: record.family,
+                expiresAt: newExpiresAt,
+                isRevoked: false
+            }, { fields: ['userId', 'tokenHash', 'family', 'expiresAt', 'isRevoked'] });
+        } else {
+            throw err;
+        }
+    }
 
     // 7. CẤP ACCESS TOKEN MỚI (15 PHÚT)
     const newAccessToken = generateAccessToken(user);

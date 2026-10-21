@@ -28,6 +28,27 @@ function initDatabase() {
             await sequelize.sync(shouldAlter ? { alter: true } : {});
         }
 
+        // Tự động bổ sung cột/bảng mới một cách an toàn (IF NOT EXISTS)
+        // Tuyệt đối không dùng alter: true làm mất hoặc hỏng schema sản xuất
+        try {
+            await sequelize.query(`
+                ALTER TABLE refresh_tokens 
+                ADD COLUMN IF NOT EXISTS "sessionStartedAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            `);
+            await sequelize.query(`
+                CREATE TABLE IF NOT EXISTS token_blacklist (
+                    id SERIAL PRIMARY KEY,
+                    jti VARCHAR(64) NOT NULL UNIQUE,
+                    "expiresAt" TIMESTAMP WITH TIME ZONE NOT NULL,
+                    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                );
+            `);
+        } catch (patchErr) {
+            // Không chặn tiến trình nếu user Supabase không có quyền DDL
+            console.warn('[DBInit safe schema check]', patchErr.message);
+        }
+
         return sequelize;
     })().catch((err) => {
         initializing = null;
