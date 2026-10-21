@@ -22,21 +22,21 @@ const handleFeedUpload = (req, res, next) => {
     });
 };
 
-// Posts CRUD
-router.post('/posts', FeedController.createPost);
+// Posts CRUD (hỗ trợ cả /posts và /post)
+router.post(['/posts', '/post'], FeedController.createPost);
 router.post('/upload', handleFeedUpload, FeedController.uploadAttachment);
-router.get('/posts', FeedController.getFeed);
-router.patch('/posts/:id', FeedController.updatePost);
-router.delete('/posts/:id', FeedController.deletePost);
+router.get(['/posts', '/post'], FeedController.getFeed);
+router.patch(['/posts/:id', '/post/:id'], FeedController.updatePost);
+router.delete(['/posts/:id', '/post/:id'], FeedController.deletePost);
 
 // Delegated Post Editors (RBAC)
-router.post('/posts/:id/editors', FeedController.grantPostEditor);
-router.delete('/posts/:id/editors/:userId', FeedController.revokePostEditor);
-router.get('/posts/:id/editors', FeedController.getPostEditors);
+router.post(['/posts/:id/editors', '/post/:id/editors'], FeedController.grantPostEditor);
+router.delete(['/posts/:id/editors/:userId', '/post/:id/editors/:userId'], FeedController.revokePostEditor);
+router.get(['/posts/:id/editors', '/post/:id/editors'], FeedController.getPostEditors);
 
 // Comments & 1-level replies
-router.post('/posts/:id/comments', FeedController.addComment);
-router.get('/posts/:id/comments', FeedController.getComments);
+router.post(['/posts/:id/comments', '/post/:id/comments'], FeedController.addComment);
+router.get(['/posts/:id/comments', '/post/:id/comments'], FeedController.getComments);
 router.delete('/comments/:id', FeedController.deleteComment);
 
 // Reactions (posts & comments)

@@ -22,3 +22,5 @@ Thumbs.db
 # Local caches
 .cache/
 *.local
+uploads/
+backend/uploads/

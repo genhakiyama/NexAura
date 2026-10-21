@@ -16,15 +16,35 @@
       "dest": "/backend/index.js"
     },
     {
-      "src": "/auth/(.*)",
+      "src": "/auth(.*)",
       "dest": "/backend/index.js"
     },
     {
-      "src": "/chat/conversation(.*)",
+      "src": "/chat(.*)",
       "dest": "/backend/index.js"
     },
     {
-      "src": "/chat/message(.*)",
+      "src": "/friends(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/users(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/feed(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/ws(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/uploads(.*)",
+      "dest": "/backend/index.js"
+    },
+    {
+      "src": "/socket.io(.*)",
       "dest": "/backend/index.js"
     },
     {
