@@ -4,30 +4,34 @@ import { api, getToken, setToken, clearToken, decodeToken, UNAUTHORIZED_EVENT } 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => decodeToken(getToken()));
-  // A token in localStorage is only a claim. Confirm it against the backend before
-  // the router decides, so opening the link with an old/invalid session lands on
-  // /login instead of dropping straight into the chat screen.
-  const [checking, setChecking] = useState(() => !!getToken());
-  // Kept in state (not just localStorage) so consumers like useSocket can
-  // reconnect when it actually becomes available.
-  const [token, setTokenState] = useState(() => getToken());
+  const [user, setUser] = useState(null);
+  // Khi app khởi động hoặc reload: mặc định checking = true để gọi /auth/refresh lấy token từ RAM
+  const [checking, setChecking] = useState(true);
+  const [token, setTokenState] = useState(null);
 
+  // Khi app khởi động hoặc reload trang: gọi POST /auth/refresh 1 lần để lấy access token mới vào RAM
   useEffect(() => {
-    if (!getToken()) return undefined;
     let alive = true;
     api
-      .myChats()
-      .catch((err) => {
+      .refreshToken()
+      .then((payload) => {
         if (!alive) return;
-        // 401 already clears the token through the global UNAUTHORIZED event.
-        // A network/CORS failure must NOT log the user out and destroy a valid
-        // session — the chat page will show the connection error instead.
-        console.error('[session check failed]', err.message);
+        const newToken = payload?.token;
+        if (newToken) {
+          setTokenState(newToken);
+          setUser(decodeToken(newToken));
+        }
+      })
+      .catch(() => {
+        // Yên lặng khi chưa có phiên đăng nhập (chưa login hoặc cookie hết hạn)
+        if (!alive) return;
+        setUser(null);
+        setTokenState(null);
       })
       .finally(() => {
         if (alive) setChecking(false);
       });
+
     return () => {
       alive = false;
     };
@@ -45,9 +49,8 @@ export function AuthProvider({ children }) {
 
   const login = async ({ email, username, password }) => {
     const payload = await api.login({ email, username, password });
-    // Backend puts the token under payload.token (watch for its `sucess` typo — we only read payload).
     if (!payload?.token) {
-      throw new Error('Backend không trả về token đăng nhập. Kiểm tra service backend trên Vercel rồi thử lại.');
+      throw new Error('Backend không trả về token đăng nhập. Vui lòng thử lại.');
     }
     setToken(payload.token);
     setTokenState(payload.token);
@@ -58,14 +61,26 @@ export function AuthProvider({ children }) {
 
   const signup = async ({ email, username, password }) => api.signup({ email, username, password });
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await api.logout();
+    } catch {}
+    clearToken();
+    setTokenState(null);
+    setUser(null);
+  };
+
+  const logoutAll = async () => {
+    try {
+      await api.logoutAll();
+    } catch {}
     clearToken();
     setTokenState(null);
     setUser(null);
   };
 
   const value = useMemo(
-    () => ({ user, token, isAuthenticated: !!user, checking, login, signup, logout }),
+    () => ({ user, token, isAuthenticated: !!user, checking, login, signup, logout, logoutAll }),
     [user, token, checking]
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

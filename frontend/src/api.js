@@ -29,19 +29,26 @@ export function resolveMediaUrl(url) {
 // AuthPage renders a deployment warning based on it.
 export const API_CONFIGURED = true;
 
+// Access token lưu hoàn toàn trong biến RAM (Memory), KHÔNG lưu vào localStorage
+let accessTokenInMemory = null;
+
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return accessTokenInMemory;
 }
+
 export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
+  accessTokenInMemory = token;
 }
+
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+  accessTokenInMemory = null;
+  try {
+    localStorage.removeItem('nexora_token');
+  } catch {}
 }
 
 // Decode the JWT payload (no signature check — just to read userId/username for the UI).
-// Returns null when the token is missing, malformed, or EXPIRED, so a stale
-// token can't silently log the user back in.
+// Returns null when the token is missing, malformed, or EXPIRED.
 export function decodeToken(token) {
   if (!token) return null;
   const parts = token.split('.');
@@ -57,24 +64,57 @@ export function decodeToken(token) {
 }
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code = null) {
     super(message);
     this.status = status;
+    this.code = code; // NO_TOKEN, INVALID_TOKEN, TOKEN_EXPIRED, REFRESH_INVALID
   }
 }
 
 export const UNAUTHORIZED_EVENT = 'nexora:unauthorized';
 
-let isRefreshing = false;
-let refreshSubscribers = [];
+// Shared refresh promise: đảm bảo nhiều request 401 cùng lúc chỉ kích hoạt DUY NHẤT một lượt refresh
+let refreshPromise = null;
 
-function subscribeTokenRefresh(cb) {
-  refreshSubscribers.push(cb);
-}
+export async function refreshAccessToken() {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
 
-function onRefreshed(token) {
-  refreshSubscribers.forEach((cb) => cb(token));
-  refreshSubscribers = [];
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Truyền HttpOnly Cookie path=/auth/refresh
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {}
+
+      const code = data?.code || (res.status === 401 || res.status === 403 ? 'REFRESH_INVALID' : 'INVALID_TOKEN');
+
+      if (!res.ok || !data?.payload?.token) {
+        clearToken();
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        throw new ApiError(data?.payload?.message || 'Phiên làm việc đã hết hạn.', res.status, code);
+      }
+
+      const newToken = data.payload.token;
+      setToken(newToken);
+      return data.payload;
+    } catch (err) {
+      clearToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw err;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 async function request(method, path, body, { auth = true, isRetry = false } = {}) {
@@ -89,7 +129,7 @@ async function request(method, path, body, { auth = true, isRetry = false } = {}
     res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
-      credentials: 'include', // transmit HttpOnly cookies
+      credentials: 'include', // truyền HttpOnly cookie
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -97,49 +137,9 @@ async function request(method, path, body, { auth = true, isRetry = false } = {}
       API_BASE
         ? `Không kết nối được tới backend (${API_BASE}). Kiểm tra service đã chạy và CORS đã cho phép domain này.`
         : 'Không kết nối được tới backend cùng domain. Kiểm tra service backend trong vercel.json đã deploy thành công chưa.',
-      0
+      0,
+      'NETWORK_ERROR'
     );
-  }
-
-  // Handle 401 Token Expiration with Automatic Refresh Token Rotation
-  if (res.status === 401 && auth && !isRetry && path !== '/auth/login' && path !== '/auth/refresh') {
-    if (!isRefreshing) {
-      isRefreshing = true;
-      try {
-        const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-        });
-        const refreshData = await refreshRes.json();
-        const newToken = refreshData?.payload?.token;
-
-        if (refreshRes.ok && newToken) {
-          setToken(newToken);
-          isRefreshing = false;
-          onRefreshed(newToken);
-          return request(method, path, body, { auth: true, isRetry: true });
-        } else {
-          throw new Error('Refresh token failed');
-        }
-      } catch {
-        isRefreshing = false;
-        clearToken();
-        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-        throw new ApiError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 401);
-      }
-    } else {
-      // Queue requests until refresh completes
-      return new Promise((resolve, reject) => {
-        subscribeTokenRefresh((newToken) => {
-          if (newToken) {
-            resolve(request(method, path, body, { auth: true, isRetry: true }));
-          } else {
-            reject(new ApiError('Phiên đăng nhập đã hết hạn.', 401));
-          }
-        });
-      });
-    }
   }
 
   let data = null;
@@ -147,8 +147,26 @@ async function request(method, path, body, { auth = true, isRetry = false } = {}
   if (contentType.includes('application/json')) {
     try {
       data = await res.json();
-    } catch {
-      // malformed JSON, handled below
+    } catch {}
+  }
+
+  // Interceptor: xử lý 401 TOKEN_EXPIRED -> refresh rồi retry đúng một lần
+  if (res.status === 401 && auth && !isRetry && path !== '/auth/login' && path !== '/auth/refresh') {
+    const errorCode = data?.code;
+
+    if (errorCode === 'TOKEN_EXPIRED') {
+      try {
+        await refreshAccessToken();
+        return request(method, path, body, { auth: true, isRetry: true });
+      } catch {
+        throw new ApiError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 401, 'REFRESH_INVALID');
+      }
+    } else {
+      // NO_TOKEN hoặc INVALID_TOKEN hoặc REFRESH_INVALID
+      clearToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      const msg = data?.payload?.error || data?.payload?.message || 'Yêu cầu không được cấp quyền.';
+      throw new ApiError(msg, 401, errorCode || 'INVALID_TOKEN');
     }
   }
 
@@ -162,15 +180,15 @@ async function request(method, path, body, { auth = true, isRetry = false } = {}
       serverMessage ||
       (API_BASE
         ? `Yêu cầu thất bại (${res.status})`
-        : `Yêu cầu thất bại (${res.status}). Backend cùng domain chưa phản hồi đúng — kiểm tra rewrite /auth và /chat trong vercel.json.`);
-    throw new ApiError(message, res.status);
+        : `Yêu cầu thất bại (${res.status}). Backend cùng domain chưa phản hồi đúng.`);
+    throw new ApiError(message, res.status, data?.code);
   }
 
   if (data === null) {
     throw new ApiError(
       API_BASE
         ? 'Backend trả về dữ liệu không hợp lệ (không phải JSON).'
-        : 'Request đang nhận về trang HTML của frontend thay vì JSON. Kiểm tra rewrite /auth và /chat trong vercel.json đã trỏ tới service backend chưa.',
+        : 'Request đang nhận về trang HTML của frontend thay vì JSON.',
       res.status
     );
   }
@@ -178,10 +196,8 @@ async function request(method, path, body, { auth = true, isRetry = false } = {}
   return data?.payload ?? data;
 }
 
-// Multipart variant — used for file uploads (FormData). The browser sets the
-// Content-Type header with the correct boundary automatically; we must NOT
-// override it.
-async function requestMultipart(path, formData) {
+// Multipart variant — used for file uploads (FormData).
+async function requestMultipart(path, formData, { isRetry = false } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -191,25 +207,39 @@ async function requestMultipart(path, formData) {
     res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers,
+      credentials: 'include',
       body: formData,
     });
   } catch {
-    throw new ApiError('Không kết nối được tới backend khi tải ảnh lên.', 0);
+    throw new ApiError('Không kết nối được tới backend khi tải ảnh lên.', 0, 'NETWORK_ERROR');
   }
 
   let data = null;
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
-    try { data = await res.json(); } catch { /* ignore */ }
+    try { data = await res.json(); } catch {}
+  }
+
+  // Interceptor cho multipart nếu gặp 401 TOKEN_EXPIRED
+  if (res.status === 401 && !isRetry) {
+    const errorCode = data?.code;
+    if (errorCode === 'TOKEN_EXPIRED') {
+      try {
+        await refreshAccessToken();
+        return requestMultipart(path, formData, { isRetry: true });
+      } catch {
+        clearToken();
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        throw new ApiError('Phiên đăng nhập đã hết hạn.', 401, 'REFRESH_INVALID');
+      }
+    }
+    clearToken();
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   }
 
   if (!res.ok) {
-    if (res.status === 401) {
-      clearToken();
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    }
     const msg = data && (data.payload?.error || data.error);
-    throw new ApiError(msg || `Upload thất bại (${res.status})`, res.status);
+    throw new ApiError(msg || `Upload thất bại (${res.status})`, res.status, data?.code);
   }
 
   return data?.payload ?? data;
@@ -342,6 +372,7 @@ export const api = {
   getWsTicket: () => request('POST', '/ws/ticket'),
 
   // ---- Refresh & Logout ----
-  refreshToken: () => request('POST', '/auth/refresh', {}, { auth: false }),
+  refreshToken: () => refreshAccessToken(),
   logout: () => request('POST', '/auth/logout', {}),
+  logoutAll: () => request('POST', '/auth/logout-all', {}),
 };

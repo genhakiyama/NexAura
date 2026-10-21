@@ -24,6 +24,11 @@ const RefreshToken = sequelize.define('RefreshToken', {
         type: DataTypes.DATE,
         allowNull: false
     },
+    sessionStartedAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
+    },
     isRevoked: {
         type: DataTypes.BOOLEAN,
         defaultValue: false

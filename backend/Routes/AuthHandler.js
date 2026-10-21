@@ -11,8 +11,9 @@ router.post('/verify-otp' , Auth.VerifyOtp);
 router.post('/resend-verification' , authRateLimiter , Auth.ResendVerification);
 router.post('/refresh' , Auth.RefreshAccessToken);
 router.post('/logout' , Auth.LogOut);
+router.post('/logout-all' , isAuth , Auth.LogOutAll);
 router.post('/ws/ticket' , isAuth , Auth.GetWsTicket);
 router.get(['/verify-Email', '/verify-email'] , Auth.VerifyEmail);
-router.all('/cron/cleanup', Auth.TriggerUserCleanup);
+router.all(['/cron/cleanup-tokens', '/cron/cleanup'], Auth.CronCleanupTokens);
 
 module.exports = router;

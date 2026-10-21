@@ -160,6 +160,9 @@ app.use('/feed' , isAuth , FeedHandler);
 const AuthController = require('../Controller/Auth');
 app.post('/ws/ticket' , isAuth , AuthController.GetWsTicket);
 
+// Cron Cleanup Endpoint (Vercel Cron / External Cron)
+app.all(['/api/cron/cleanup-tokens', '/api/cron/cleanup'], AuthController.CronCleanupTokens);
+
 // Express 5 forwards rejected async handlers here. Without this the browser
 // receives an HTML stack page and the frontend can only report "request fail".
 app.use((err , req , res , next) => {

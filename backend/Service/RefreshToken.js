@@ -1,111 +1,150 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 const RefreshToken = require('../Models/RefreshToken');
+const TokenBlacklist = require('../Models/TokenBlacklist');
 const User = require('../Models/User');
 const { encryptUserId } = require('../UTIL/UserCrypto');
 require('dotenv').config();
 
 const SECRET_KEY = process.env.SECRET_KEY || 'nexora-secret-salt-key-encryption';
 const REFRESH_EXPIRES_DAYS = 7;
-const ACCESS_EXPIRES = '15m'; // 15 phút theo chuẩn bảo mật ngắn hạn
+const ABSOLUTE_SESSION_MAX_DAYS = 30; // Giới hạn tuyệt đối 30 ngày cho phiên trượt
+const ACCESS_EXPIRES = '15m'; // 15 phút
 
 /**
- * Hash a raw token string with SHA-256 for safe storage in the database.
+ * Băm token dạng thô bằng SHA-256 để lưu an toàn vào cơ sở dữ liệu
  */
 function hashToken(rawToken) {
     return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
 /**
- * Generate a short-lived Access Token (15 minutes).
+ * Tạo Access Token (JWT) ngắn hạn (15 phút) kèm `jti` ngẫu nhiên để hỗ trợ blacklist
  */
 function generateAccessToken(user) {
+    const jti = crypto.randomUUID();
     return jwt.sign({
         userId: user.id,
         encryptedUserId: encryptUserId(user.id),
         username: user.username,
-        email: user.email
+        email: user.email,
+        jti
     }, SECRET_KEY, { expiresIn: ACCESS_EXPIRES });
 }
 
 /**
- * Create a new Refresh Token family and record in the database.
- * Returns the raw token string (only shown once to the client).
+ * Khởi tạo Refresh Token mới khi đăng nhập
+ * - rawToken: gửi cho client (chỉ hiển thị 1 lần qua Cookie)
+ * - tokenHash: lưu server-side
+ * - sessionStartedAt: lưu thời điểm bắt đầu phiên để áp dụng mốc trượt tối đa 30 ngày
  */
 async function createRefreshToken(userId) {
     const rawToken = crypto.randomBytes(40).toString('hex');
     const tokenHash = hashToken(rawToken);
     const family = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 
     await RefreshToken.create({
         userId,
         tokenHash,
         family,
         expiresAt,
+        sessionStartedAt: now,
         isRevoked: false
     });
+
+    // Dọn lười theo xác suất (2% cơ hội mỗi lần login)
+    maybeLazyCleanup();
 
     return rawToken;
 }
 
 /**
- * Rotate a refresh token:
- * 1. Validate the current token.
- * 2. If already revoked, DETECT TOKEN THEFT -> revoke the entire family immediately.
- * 3. Invalidate the old token and generate a fresh Access Token + Refresh Token in the same family.
+ * Cơ chế Rotation cho Refresh Token:
+ * 1. Kiểm tra tính hợp lệ & hết hạn
+ * 2. Phát hiện tái sử dụng (Reuse Detection): nếu token đã bị revoked mà được gửi lại
+ *    -> coi như token bị đánh cắp -> lập tức thu hồi toàn bộ Family!
+ * 3. Kiểm tra giới hạn tuyệt đối 30 ngày (sessionStartedAt)
+ * 4. Xóa/thu hồi token cũ, phát hành token mới trong cùng Family
  */
 async function rotateRefreshToken(rawToken) {
     if (!rawToken || typeof rawToken !== 'string') {
-        return { statusCode: 400, error: 'Refresh token không được để trống.' };
+        return { statusCode: 401, code: 'REFRESH_INVALID', error: 'Refresh token không được để trống.' };
     }
 
     const tokenHash = hashToken(rawToken);
     const record = await RefreshToken.findOne({ where: { tokenHash } });
 
     if (!record) {
-        return { statusCode: 401, error: 'Refresh token không hợp lệ hoặc đã hết hạn.' };
+        return { statusCode: 401, code: 'REFRESH_INVALID', error: 'Refresh token không tồn tại.' };
     }
 
-    // Reuse Detection: If an already-revoked token is used again, someone stole it!
+    // 1. PHÁT HIỆN TÁI SỬ DỤNG (TOKEN THEFT REUSE DETECTION)
     if (record.isRevoked) {
-        console.warn(`[SECURITY ALERT] Refresh token reuse detected for family ${record.family}! Revoking entire family.`);
+        console.warn(`[SECURITY ALERT] Tái sử dụng Refresh Token bị phát hiện cho Family ${record.family}! Thu hồi toàn bộ Family.`);
+        // Thu hồi toàn bộ token cùng Family để bảo vệ tài khoản
         await RefreshToken.update({ isRevoked: true }, { where: { family: record.family } });
         return {
             statusCode: 403,
-            error: 'Phát hiện tái sử dụng phiên đăng nhập bất thường! Toàn bộ phiên làm việc của bạn đã bị vô hiệu hoá vì lý do an toàn.'
+            code: 'REFRESH_INVALID',
+            error: 'Phát hiện tái sử dụng phiên đăng nhập bất thường! Toàn bộ phiên làm việc đã bị thu hồi vì lý do bảo mật.'
         };
     }
 
-    // Check expiration
-    if (new Date() > record.expiresAt) {
+    const now = new Date();
+
+    // 2. KIỂM TRA GIỚI HẠN TUYỆT ĐỐI 30 NGÀY CỦA PHIÊN (ABSOLUTE SESSION LIMIT)
+    const sessionStart = record.sessionStartedAt ? new Date(record.sessionStartedAt) : new Date(record.createdAt);
+    const maxAbsoluteExpire = new Date(sessionStart.getTime() + ABSOLUTE_SESSION_MAX_DAYS * 24 * 60 * 60 * 1000);
+    if (now > maxAbsoluteExpire) {
         await record.update({ isRevoked: true });
-        return { statusCode: 401, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' };
+        return {
+            statusCode: 401,
+            code: 'REFRESH_INVALID',
+            error: 'Phiên đăng nhập đã đạt giới hạn tối đa 30 ngày. Vui lòng đăng nhập lại.'
+        };
     }
 
-    // Step 1: Revoke the used token immediately
+    // 3. KIỂM TRA HẠN 7 NGÀY CỦA TOKEN
+    if (now > new Date(record.expiresAt)) {
+        await record.update({ isRevoked: true });
+        return {
+            statusCode: 401,
+            code: 'REFRESH_INVALID',
+            error: 'Refresh token đã hết hạn.'
+        };
+    }
+
+    // 4. VÔ HIỆU HÓA TOKEN VỪA DÙNG (CHỈ DÙNG 1 LẦN)
     await record.update({ isRevoked: true });
 
-    // Step 2: Fetch user
+    // 5. LẤY THÔNG TIN USER
     const user = await User.findByPk(record.userId);
     if (!user) {
-        return { statusCode: 404, error: 'Người dùng không tồn tại.' };
+        return { statusCode: 404, code: 'REFRESH_INVALID', error: 'Người dùng không còn tồn tại.' };
     }
 
-    // Step 3: Issue new tokens under the SAME family
+    // 6. CẤP REFRESH TOKEN MỚI TRONG CÙNG FAMILY (GIỮ NGUYÊN sessionStartedAt)
     const newRawToken = crypto.randomBytes(40).toString('hex');
     const newTokenHash = hashToken(newRawToken);
-    const newExpiresAt = new Date(Date.now() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
+    const newExpiresAt = new Date(now.getTime() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 
     await RefreshToken.create({
         userId: user.id,
         tokenHash: newTokenHash,
-        family: record.family, // keep family for reuse tracking
+        family: record.family,
         expiresAt: newExpiresAt,
+        sessionStartedAt: sessionStart,
         isRevoked: false
     });
 
+    // 7. CẤP ACCESS TOKEN MỚI (15 PHÚT)
     const newAccessToken = generateAccessToken(user);
+
+    // Dọn lười theo xác suất (2% cơ hội)
+    maybeLazyCleanup();
 
     return {
         accessToken: newAccessToken,
@@ -120,7 +159,7 @@ async function rotateRefreshToken(rawToken) {
 }
 
 /**
- * Revoke a refresh token on user logout.
+ * Thu hồi Refresh Token khi đăng xuất 1 thiết bị
  */
 async function revokeRefreshToken(rawToken) {
     if (!rawToken || typeof rawToken !== 'string') return;
@@ -128,9 +167,104 @@ async function revokeRefreshToken(rawToken) {
     await RefreshToken.update({ isRevoked: true }, { where: { tokenHash } });
 }
 
+/**
+ * Đăng xuất tất cả thiết bị (thu hồi mọi Refresh Token của user)
+ */
+async function revokeAllUserTokens(userId) {
+    if (!userId) return;
+    await RefreshToken.update({ isRevoked: true }, { where: { userId } });
+}
+
+/**
+ * Đưa jti của Access Token vào Blacklist (kèm thời điểm hết hạn của JWT)
+ */
+async function blacklistAccessToken(decodedToken) {
+    if (!decodedToken || !decodedToken.jti || !decodedToken.exp) return;
+    try {
+        const expiresAt = new Date(decodedToken.exp * 1000);
+        await TokenBlacklist.findOrCreate({
+            where: { jti: decodedToken.jti },
+            defaults: {
+                jti: decodedToken.jti,
+                expiresAt
+            }
+        });
+    } catch (err) {
+        console.error('[blacklistAccessToken error]', err.message);
+    }
+}
+
+/**
+ * Kiểm tra jti có nằm trong Blacklist hay không
+ */
+async function isTokenBlacklisted(jti) {
+    if (!jti) return false;
+    try {
+        const found = await TokenBlacklist.findOne({
+            where: {
+                jti,
+                expiresAt: {
+                    [Op.gt]: new Date()
+                }
+            }
+        });
+        return !!found;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Dọn dẹp token hết hạn trong database
+ */
+async function cleanupExpiredTokens() {
+    try {
+        const now = new Date();
+        const deletedRefresh = await RefreshToken.destroy({
+            where: {
+                expiresAt: {
+                    [Op.lt]: now
+                }
+            }
+        });
+
+        const deletedBlacklist = await TokenBlacklist.destroy({
+            where: {
+                expiresAt: {
+                    [Op.lt]: now
+                }
+            }
+        });
+
+        return {
+            success: true,
+            deletedRefresh,
+            deletedBlacklist
+        };
+    } catch (err) {
+        console.error('[cleanupExpiredTokens error]', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Dọn lười theo xác suất (2% cơ hội để không làm chậm request chính)
+ */
+function maybeLazyCleanup() {
+    if (Math.random() < 0.02) {
+        cleanupExpiredTokens().catch(err => {
+            console.error('[LazyCleanup error]', err.message);
+        });
+    }
+}
+
 module.exports = {
     generateAccessToken,
     createRefreshToken,
     rotateRefreshToken,
-    revokeRefreshToken
+    revokeRefreshToken,
+    revokeAllUserTokens,
+    blacklistAccessToken,
+    isTokenBlacklisted,
+    cleanupExpiredTokens
 };

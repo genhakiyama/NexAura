@@ -72,20 +72,20 @@ async function LogIn(req , res) {
         // Generate rotating Refresh Token (hashed in DB)
         const rawRefreshToken = await RefreshTokenService.createRefreshToken(userId);
 
-        // Set HttpOnly, Secure, SameSite cookie
+        // Set HttpOnly, Secure, SameSite, Path=/auth/refresh cookie
         res.cookie('refreshToken', rawRefreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
+            path: '/auth/refresh',
             maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
         });
 
         return res.status(200).json({
-            sucess : true , 
+            success : true , 
             payload : {
                 message : isCheck.message,
                 token : accessToken,
-                refreshToken : rawRefreshToken,
                 userId : encryptUserId(userId),
                 expiresIn : 900 // 15 mins
             }
@@ -106,18 +106,20 @@ async function RefreshAccessToken(req , res) {
         const result = await RefreshTokenService.rotateRefreshToken(rawRefreshToken);
 
         if (result.error) {
-            res.clearCookie('refreshToken');
+            res.clearCookie('refreshToken', { path: '/auth/refresh' });
             return res.status(result.statusCode || 401).json({
                 success: false,
+                code: result.code || 'REFRESH_INVALID',
                 payload: { message: result.error }
             });
         }
 
-        // Set updated refresh token cookie
+        // Set updated rotating refresh token cookie
         res.cookie('refreshToken', result.refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
+            path: '/auth/refresh',
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
 
@@ -125,7 +127,6 @@ async function RefreshAccessToken(req , res) {
             success: true,
             payload: {
                 token: result.accessToken,
-                refreshToken: result.refreshToken,
                 user: result.user,
                 expiresIn: 900
             }
@@ -134,6 +135,7 @@ async function RefreshAccessToken(req , res) {
         console.error('[Refresh error]', err);
         return res.status(500).json({
             success: false,
+            code: 'REFRESH_INVALID',
             payload: { message: 'Lỗi làm mới phiên đăng nhập.' }
         });
     }
@@ -143,10 +145,26 @@ async function LogOut(req , res) {
     const rawRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
     try {
+        // 1. Thu hồi Refresh Token
         if (rawRefreshToken) {
             await RefreshTokenService.revokeRefreshToken(rawRefreshToken);
         }
-        res.clearCookie('refreshToken');
+
+        // 2. Blacklist Access Token hiện tại (nếu gửi kèm Header)
+        const authHeader = req.get('Authorization');
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            try {
+                const decoded = jwt.decode(token);
+                if (decoded && decoded.jti && decoded.exp) {
+                    await RefreshTokenService.blacklistAccessToken(decoded);
+                }
+            } catch {}
+        } else if (req.tokenPayload) {
+            await RefreshTokenService.blacklistAccessToken(req.tokenPayload);
+        }
+
+        res.clearCookie('refreshToken', { path: '/auth/refresh' });
 
         return res.status(200).json({
             success: true,
@@ -154,12 +172,69 @@ async function LogOut(req , res) {
         });
     } catch (err) {
         console.error('[Logout error]', err);
-        res.clearCookie('refreshToken');
+        res.clearCookie('refreshToken', { path: '/auth/refresh' });
         return res.status(200).json({
             success: true,
             payload: { message: 'Đã hoàn tất đăng xuất.' }
         });
     }
+}
+
+/**
+ * Đăng xuất khỏi TẤT CẢ thiết bị (thu hồi toàn bộ Refresh Tokens của user & blacklist token hiện tại)
+ */
+async function LogOutAll(req, res) {
+    const userId = req.userId;
+    if (!userId) {
+        return res.status(401).json({
+            success: false,
+            code: 'NO_TOKEN',
+            payload: { error: 'Chưa xác thực người dùng.' }
+        });
+    }
+
+    try {
+        // 1. Thu hồi toàn bộ Refresh Tokens của user trong database
+        await RefreshTokenService.revokeAllUserTokens(userId);
+
+        // 2. Blacklist Access Token hiện tại
+        if (req.tokenPayload) {
+            await RefreshTokenService.blacklistAccessToken(req.tokenPayload);
+        }
+
+        // 3. Xoá cookie
+        res.clearCookie('refreshToken', { path: '/auth/refresh' });
+
+        return res.status(200).json({
+            success: true,
+            payload: { message: 'Đã đăng xuất khỏi tất cả các thiết bị thành công.' }
+        });
+    } catch (err) {
+        console.error('[LogoutAll error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { error: 'Lỗi máy chủ khi đăng xuất tất cả thiết bị.' }
+        });
+    }
+}
+
+/**
+ * Endpoint Cron dọn dẹp tokens hết hạn (Vercel Cron / External Cron)
+ */
+async function CronCleanupTokens(req, res) {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+        const authHeader = req.headers.authorization;
+        if (authHeader !== `Bearer ${cronSecret}`) {
+            return res.status(401).json({
+                success: false,
+                payload: { error: 'Unauthorized: CRON_SECRET mismatch' }
+            });
+        }
+    }
+
+    const result = await RefreshTokenService.cleanupExpiredTokens();
+    return res.status(result.success ? 200 : 500).json(result);
 }
 
 async function GetWsTicket(req , res) {
@@ -380,5 +455,7 @@ module.exports = {
     VerifyEmail,
     VerifyOtp,
     ResendVerification,
-    TriggerUserCleanup
+    TriggerUserCleanup,
+    LogOutAll,
+    CronCleanupTokens
 };

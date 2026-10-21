@@ -22,6 +22,7 @@ const registerSocketHandlers = require('./Socket/SocketHandler');
 
 // Models to ensure tables exist
 const RefreshToken = require('./Models/RefreshToken');
+const TokenBlacklist = require('./Models/TokenBlacklist');
 const Friendship = require('./Models/Friendship');
 const Post = require('./Models/Post');
 const PostEditor = require('./Models/PostEditor');
@@ -44,8 +45,9 @@ async function startServer() {
         console.log('✅ [1/3] Kết nối cơ sở dữ liệu thành công.');
 
         // 2. Tự động kiểm tra và tạo bảng mới nếu chưa tồn tại
-        console.log('🔄 [2/3] Kiểm tra schema bảng mới (Friendships, Feed, RBAC, Tokens)...');
+        console.log('🔄 [2/3] Kiểm tra schema bảng mới (Friendships, Feed, RBAC, Tokens, Blacklist)...');
         await RefreshToken.sync();
+        await TokenBlacklist.sync();
         await Friendship.sync();
         await Post.sync();
         await PostEditor.sync();
