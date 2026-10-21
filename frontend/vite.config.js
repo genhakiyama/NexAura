@@ -17,6 +17,11 @@ export default defineConfig({
       '/auth': 'http://localhost:3000',
       '/chat/conversation': 'http://localhost:3000',
       '/chat/message': 'http://localhost:3000',
+      '/friends': 'http://localhost:3000',
+      '/users': 'http://localhost:3000',
+      '/feed': 'http://localhost:3000',
+      '/ws': 'http://localhost:3000',
+      '/health': 'http://localhost:3000',
       '/uploads': 'http://localhost:3000',
       '/socket.io': {
         target: 'http://localhost:3000',

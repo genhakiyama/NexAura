@@ -265,6 +265,13 @@ export const api = {
     return requestMultipart('/chat/message/upload', fd);
   },
 
+  uploadFile: ({ conversationId, file }) => {
+    const fd = new FormData();
+    fd.append('conversationId', conversationId);
+    fd.append('file', file);
+    return requestMultipart('/chat/message/upload-file', fd);
+  },
+
   // ---- Friends & Users (Social) ----
   searchUsers: (q) => request('GET', `/users/search?q=${encodeURIComponent(q)}`),
   sendFriendRequest: (targetUserId) =>
@@ -291,6 +298,11 @@ export const api = {
   },
   createPost: ({ content, mediaUrls = [], visibility = 'friends' }) =>
     request('POST', '/feed/posts', { content, mediaUrls, visibility }),
+  uploadFeedAttachment: (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return requestMultipart('/feed/upload', fd);
+  },
   updatePost: (postId, { content, mediaUrls, visibility }) =>
     request('PATCH', `/feed/posts/${postId}`, { content, mediaUrls, visibility }),
   deletePost: (postId) =>

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, resolveMediaUrl } from '../api';
+import { formatFileSize, getFileDetails, ImageLightbox } from './MessageList';
 
 const REACTION_EMOJIS = {
   like: '👍',
@@ -35,6 +36,12 @@ export default function FeedDrawer({
   const [newContent, setNewContent] = useState('');
   const [newVisibility, setNewVisibility] = useState('friends');
   const [posting, setPosting] = useState(false);
+  const [attachedMedia, setAttachedMedia] = useState([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
+
+  const imageInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Edit post state
   const [editingPostId, setEditingPostId] = useState(null);
@@ -115,20 +122,58 @@ export default function FeedDrawer({
     };
   }, [on, off, loadNotifications]);
 
+  // Upload attachments
+  const handleUploadFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    setUploadingAttachment(true);
+    let successCount = 0;
+
+    for (const file of files) {
+      try {
+        const res = await api.uploadFeedAttachment(file);
+        if (res?.url) {
+          setAttachedMedia((prev) => [
+            ...prev,
+            {
+              url: res.url,
+              type: res.type || (file.type.startsWith('image/') ? 'image' : 'file'),
+              name: res.name || file.name,
+              size: res.size || file.size
+            }
+          ]);
+          successCount++;
+        }
+      } catch (err) {
+        showFeedback(err.message || `Lỗi tải lên tệp: ${file.name}`, 'error');
+      }
+    }
+
+    setUploadingAttachment(false);
+    if (successCount > 0) {
+      showFeedback(`Đã tải lên ${successCount} tệp/ảnh.`, 'success');
+    }
+  };
+
+  const handleRemoveAttachment = (idx) => {
+    setAttachedMedia((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   // ---- 3. Đăng bài mới ----
   const handleCreatePost = async (e) => {
-    e.preventDefault();
-    if (!newContent.trim()) return;
+    if (e && e.preventDefault) e.preventDefault();
+    if (!newContent.trim() && attachedMedia.length === 0) return;
 
     setPosting(true);
     try {
       const res = await api.createPost({
         content: newContent,
+        mediaUrls: attachedMedia,
         visibility: newVisibility
       });
       if (res?.post) {
         setPosts((prev) => [res.post, ...prev]);
         setNewContent('');
+        setAttachedMedia([]);
         showFeedback('Đã đăng bài viết thành công!', 'success');
       }
     } catch (err) {
@@ -421,27 +466,103 @@ export default function FeedDrawer({
               maxLength={5000}
             />
 
+            {/* ATTACHMENT PREVIEWS */}
+            {(attachedMedia.length > 0 || uploadingAttachment) && (
+              <div className="feed-prompt-previews" style={{ marginBottom: 10 }}>
+                {attachedMedia.map((m, idx) => (
+                  <div key={idx} className="feed-preview-chip">
+                    {m.type === 'image' ? (
+                      <img src={resolveMediaUrl(m.url)} alt={m.name} className="feed-preview-thumb" />
+                    ) : m.type === 'video' ? (
+                      <span style={{ fontSize: '18px' }}>🎬</span>
+                    ) : (
+                      <span style={{ fontSize: '18px' }}>{getFileDetails(m.name).icon}</span>
+                    )}
+                    <div className="feed-preview-info">
+                      <span className="feed-preview-name">{m.name || 'Tệp'}</span>
+                      <span className="feed-preview-size">{formatFileSize(m.size)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="feed-preview-remove"
+                      onClick={() => handleRemoveAttachment(idx)}
+                      title="Xoá đính kèm"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {uploadingAttachment && (
+                  <div className="feed-preview-uploading">
+                    <span>⏳</span> Đang tải tệp/video...
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="composer-footer">
-              <select
-                className="visibility-select"
-                value={newVisibility}
-                onChange={(e) => setNewVisibility(e.target.value)}
-                title="Quyền riêng tư của bài viết"
-              >
-                <option value="friends">👥 Bạn bè</option>
-                <option value="public">🌐 Công khai</option>
-                <option value="private">🔒 Chỉ mình tôi</option>
-              </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <select
+                  className="visibility-select"
+                  value={newVisibility}
+                  onChange={(e) => setNewVisibility(e.target.value)}
+                  title="Quyền riêng tư của bài viết"
+                >
+                  <option value="friends">Quyền riêng tư: Bạn bè</option>
+                  <option value="public">Quyền riêng tư: Công khai</option>
+                  <option value="private">Quyền riêng tư: Chỉ mình tôi</option>
+                </select>
+
+                <button
+                  type="button"
+                  className="ghost sm"
+                  onClick={() => imageInputRef.current?.click()}
+                  title="Upload image"
+                >
+                  🖼️ Upload image
+                </button>
+                <button
+                  type="button"
+                  className="ghost sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Upload file hoặc video (tối đa 200MB)"
+                >
+                  📁 Upload file hoặc video
+                </button>
+              </div>
 
               <button
                 type="submit"
                 className="primary sm"
-                disabled={posting || !newContent.trim()}
+                disabled={posting || uploadingAttachment || (!newContent.trim() && attachedMedia.length === 0)}
               >
                 {posting ? 'Đang đăng...' : 'Đăng bài'}
               </button>
             </div>
           </form>
+
+          {/* Hidden inputs */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files) handleUploadFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files) handleUploadFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
         </div>
 
         {/* ================= POSTS STREAM ================= */}
@@ -544,9 +665,118 @@ export default function FeedDrawer({
                       </div>
                     </div>
                   ) : (
-                    <div className="post-content">
-                      <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{post.content}</p>
-                    </div>
+                    <>
+                      {post.content && (
+                        <div className="post-content">
+                          <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{post.content}</p>
+                        </div>
+                      )}
+
+                      {/* Post media attachments */}
+                      {Array.isArray(post.mediaUrls) && post.mediaUrls.length > 0 && (
+                        <div className="post-media-container" style={{ margin: '8px 0' }}>
+                          {/* Images */}
+                          {(() => {
+                            const images = post.mediaUrls.filter(
+                              (m) => m.type === 'image' || /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!images.length) return null;
+                            const count = images.length;
+                            const countClass = count === 1 ? 'count-1' : count === 2 ? 'count-2' : count === 3 ? 'count-3' : 'count-4';
+                            return (
+                              <div className={`post-images-grid ${countClass}`}>
+                                {images.slice(0, 4).map((img, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="post-img-cell"
+                                    onClick={() => setLightboxSrc(resolveMediaUrl(img.url))}
+                                    title="Xem ảnh phóng to"
+                                  >
+                                    <img
+                                      src={resolveMediaUrl(img.url)}
+                                      alt={img.name || `Ảnh ${idx + 1}`}
+                                      className="post-img-item"
+                                    />
+                                    {idx === 3 && count > 4 && (
+                                      <div className="post-img-overlay">+{count - 3}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Videos Player */}
+                          {(() => {
+                            const videos = post.mediaUrls.filter(
+                              (m) =>
+                                m.type === 'video' ||
+                                /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!videos.length) return null;
+
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {videos.map((vid, idx) => (
+                                  <div key={idx} className="post-video-container">
+                                    <video
+                                      controls
+                                      playsInline
+                                      preload="metadata"
+                                      className="post-video-player"
+                                      src={resolveMediaUrl(vid.url)}
+                                    >
+                                      Trình duyệt không hỗ trợ xem video trực tiếp.
+                                    </video>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Files */}
+                          {(() => {
+                            const files = post.mediaUrls.filter(
+                              (m) =>
+                                m.type !== 'image' &&
+                                m.type !== 'video' &&
+                                !/\.(jpe?g|png|gif|webp|bmp|svg|mp4|mov|webm|mkv|avi|m4v|3gp)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!files.length) return null;
+                            return (
+                              <div className="post-files-list">
+                                {files.map((file, idx) => {
+                                  const details = getFileDetails(file.name);
+                                  return (
+                                    <a
+                                      key={idx}
+                                      href={resolveMediaUrl(file.url)}
+                                      download={file.name || 'attachment'}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="post-file-card"
+                                    >
+                                      <div className="post-file-left">
+                                        <div className="post-file-icon-badge" style={{ borderColor: details.color }}>
+                                          <span>{details.icon}</span>
+                                        </div>
+                                        <div className="post-file-info">
+                                          <span className="post-file-name">{file.name || 'Tệp đính kèm'}</span>
+                                          <span className="post-file-size">
+                                            {details.label} {file.size ? `• ${formatFileSize(file.size)}` : ''}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <span className="post-file-download-btn">⬇ Tải về</span>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* REACTIONS BAR & COUNTS */}
@@ -787,6 +1017,11 @@ export default function FeedDrawer({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
       )}
     </aside>
   );

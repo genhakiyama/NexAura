@@ -83,7 +83,8 @@ export default function FriendsDrawer({
       setSearchLoading(true);
       try {
         const res = await api.searchUsers(q);
-        setSearchResults(res?.users || []);
+        const usersList = Array.isArray(res) ? res : (res?.users || res?.data || []);
+        setSearchResults(usersList);
       } catch (err) {
         console.error('Lỗi tìm kiếm:', err);
       } finally {
@@ -142,13 +143,15 @@ export default function FriendsDrawer({
   const handleSendRequest = async (targetUserId) => {
     setActionLoading((p) => ({ ...p, [targetUserId]: true }));
     try {
-      await api.sendFriendRequest(targetUserId);
+      const res = await api.sendFriendRequest(targetUserId);
       showFeedback('Đã gửi lời mời kết bạn!', 'success');
       loadRequests();
-      // Update local state in searchResults
+      // Update local state in searchResults with returned requestId
       setSearchResults((prev) =>
         prev.map((u) =>
-          u.id === targetUserId ? { ...u, relationshipStatus: 'pending_sent' } : u
+          u.id === targetUserId
+            ? { ...u, relationshipStatus: 'pending_sent', requestId: res?.requestId }
+            : u
         )
       );
     } catch (err) {
@@ -167,6 +170,13 @@ export default function FriendsDrawer({
         'success'
       );
       await Promise.all([loadFriends(), loadRequests()]);
+      setSearchResults((prev) =>
+        prev.map((u) =>
+          u.requestId === requestId
+            ? { ...u, relationshipStatus: action === 'accept' ? 'friends' : 'none', requestId: action === 'accept' ? requestId : null }
+            : u
+        )
+      );
     } catch (err) {
       showFeedback(err.message || 'Lỗi xử lý lời mời.', 'error');
     } finally {
@@ -512,7 +522,17 @@ export default function FriendsDrawer({
 
                       <div className="social-user-actions">
                         {isFriend && (
-                          <span className="chip">Bạn bè</span>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <span className="chip">Bạn bè</span>
+                            <button
+                              className="primary sm"
+                              onClick={() => handleChatWith(u)}
+                              disabled={actionLoading[u.id]}
+                              title="Nhắn tin 1-1"
+                            >
+                              💬 Nhắn
+                            </button>
+                          </div>
                         )}
                         {isSent && (
                           <button

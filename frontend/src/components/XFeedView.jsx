@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, resolveMediaUrl } from '../api';
+import { formatFileSize, getFileDetails, ImageLightbox } from './MessageList';
 
 const REACTION_EMOJIS = {
   like: '👍',
@@ -10,9 +11,17 @@ const REACTION_EMOJIS = {
   angry: '😡'
 };
 
+const PROMPT_SUGGESTIONS = [
+  'Chia sẻ một phát kiến kỹ thuật thú vị hoặc dự án tâm đắc bạn đang thực hiện hôm nay...',
+  'Điều gì làm bạn bất ngờ nhất trong tuần này? Hãy cùng thảo luận nhé...',
+  'Explain quantum computing in simple terms and why it matters...',
+  'Một công cụ AI hoặc thư viện code hữu ích mà bạn muốn giới thiệu cho mọi người...',
+  'Góc nhìn của bạn về xu hướng phát triển web và tương lai của công nghệ...'
+];
+
 /**
  * XFeedView — Giao diện Bảng tin toàn màn hình chuẩn phong cách X (Twitter)
- * Thiết kế theo hệ thống: Neo-brutalist Tech / Lime Wireframe
+ * Thiết kế theo hệ thống: Neo-brutalist Tech / Lime Wireframe + AI Prompt Composer
  * Phân quyền:
  * - Chỉnh sửa: Tác giả & người được uỷ quyền (PostEditor)
  * - Xoá bài: DUY NHẤT Tác giả
@@ -30,10 +39,23 @@ export default function XFeedView({
   const [nextCursor, setNextCursor] = useState(null);
   const [feedback, setFeedback] = useState({ text: '', type: 'info' });
 
-  // Post composer
+  // Post composer state
   const [newContent, setNewContent] = useState('');
   const [newVisibility, setNewVisibility] = useState('friends');
   const [posting, setPosting] = useState(false);
+  const [attachedMedia, setAttachedMedia] = useState([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showVisibilityMenu, setShowVisibilityMenu] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+
+  // Lightbox for previewing images
+  const [lightboxSrc, setLightboxSrc] = useState(null);
+
+  // File input refs
+  const imageInputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
 
   // Edit post
   const [editingPostId, setEditingPostId] = useState(null);
@@ -90,20 +112,123 @@ export default function XFeedView({
     return () => off('new_social_notification', handleNotif);
   }, [on, off, loadFeed]);
 
-  // 2. Đăng bài mới
-  const handleCreatePost = async (e) => {
+  // Upload attachments (images & files)
+  const handleUploadFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    setUploadingAttachment(true);
+    let successCount = 0;
+
+    for (const file of files) {
+      try {
+        const res = await api.uploadFeedAttachment(file);
+        if (res?.url) {
+          setAttachedMedia((prev) => [
+            ...prev,
+            {
+              url: res.url,
+              type: res.type || (file.type.startsWith('image/') ? 'image' : 'file'),
+              name: res.name || file.name,
+              size: res.size || file.size
+            }
+          ]);
+          successCount++;
+        }
+      } catch (err) {
+        showFeedback(err.message || `Lỗi tải lên tệp: ${file.name}`, 'error');
+      }
+    }
+
+    setUploadingAttachment(false);
+    if (successCount > 0) {
+      showFeedback(`// ĐÃ TẢI LÊN ${successCount} TỆP/ẢNH THÀNH CÔNG`, 'success');
+    }
+  };
+
+  const handleRemoveAttachment = (idx) => {
+    setAttachedMedia((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleDeepResearchPrompt = () => {
+    const randomPrompt = PROMPT_SUGGESTIONS[Math.floor(Math.random() * PROMPT_SUGGESTIONS.length)];
+    setNewContent((prev) => {
+      const trimmed = prev.trim();
+      return trimmed ? `${trimmed}\n${randomPrompt}` : randomPrompt;
+    });
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
+  const handleToggleSpeech = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setNewContent((prev) =>
+        prev ? `${prev} [🎙️ Voice Note: Hôm nay là một ngày tuyệt vời!]` : '[🎙️ Voice Note: Hôm nay là một ngày tuyệt vời!]'
+      );
+      showFeedback('Trình duyệt chưa hỗ trợ Web Speech API trực tiếp, đã thêm mẫu ghi chú.', 'info');
+      return;
+    }
+
+    if (isRecording) {
+      setIsRecording(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'vi-VN';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      setIsRecording(true);
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setNewContent((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        setIsRecording(false);
+      };
+
+      recognition.onerror = () => setIsRecording(false);
+      recognition.onend = () => setIsRecording(false);
+
+      recognition.start();
+    } catch {
+      setIsRecording(false);
+    }
+  };
+
+  const handleDropFiles = (e) => {
     e.preventDefault();
-    if (!newContent.trim()) return;
+    setIsDragOver(false);
+    if (e.dataTransfer?.files?.length) {
+      handleUploadFiles(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const handleClearComposer = () => {
+    if (newContent || attachedMedia.length > 0) {
+      if (window.confirm('Xoá bản nháp bài viết hiện tại?')) {
+        setNewContent('');
+        setAttachedMedia([]);
+      }
+    }
+  };
+
+  // 2. Đăng bài mới (cho phép kèm nội dung, ảnh hoặc tệp)
+  const handleCreatePost = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!newContent.trim() && attachedMedia.length === 0) return;
 
     setPosting(true);
     try {
       const res = await api.createPost({
         content: newContent,
+        mediaUrls: attachedMedia,
         visibility: newVisibility
       });
       if (res?.post) {
         setPosts((prev) => [res.post, ...prev]);
         setNewContent('');
+        setAttachedMedia([]);
         showFeedback('// BÀI VIẾT ĐÃ ĐƯỢC ĐĂNG THÀNH CÔNG', 'success');
       }
     } catch (err) {
@@ -292,41 +417,234 @@ export default function XFeedView({
           </div>
         )}
 
-        {/* POST COMPOSER */}
-        <div className="post-composer-card">
-          <form onSubmit={handleCreatePost}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <div className="post-avatar-square">
-                {currentUser?.username ? currentUser.username.charAt(0).toUpperCase() : 'U'}
-              </div>
-              <span className="eyebrow">@{currentUser?.username || 'user'} // Soạn bài mới</span>
+        {/* POST COMPOSER - AI PROMPT BAR STYLE */}
+        <div className="feed-prompt-container">
+          {/* TOP EYEBROW BADGES */}
+          <div className="feed-prompt-header">
+            <div
+              className="feed-prompt-badge-left"
+              onClick={handleDeepResearchPrompt}
+              title="Nhấn để nhận ý tưởng hoặc chủ đề thảo luận"
+            >
+              <span>✨</span>
+              <span>Unlock more with Pro Plan</span>
             </div>
+            <div className="feed-prompt-badge-right">
+              <span>❄️</span>
+              <span>Powered by Assistant v2.6</span>
+            </div>
+          </div>
 
-            <textarea
-              className="composer-textarea"
-              placeholder="Bạn đang nghĩ gì hôm nay? Nhập nội dung chia sẻ..."
-              rows={3}
-              value={newContent}
-              onChange={(e) => setNewContent(e.target.value)}
-              maxLength={5000}
-            />
-
-            <div className="composer-footer">
-              <select
-                className="visibility-select"
-                value={newVisibility}
-                onChange={(e) => setNewVisibility(e.target.value)}
+          {/* CRISP WHITE PROMPT CARD */}
+          <div
+            className={`feed-prompt-card ${isDragOver ? 'drag-over' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDropFiles}
+          >
+            <div className="feed-prompt-input-row">
+              {/* PLUS BUTTON */}
+              <button
+                type="button"
+                className="feed-prompt-plus-btn"
+                title="Đính kèm ảnh hoặc tệp"
+                onClick={() => imageInputRef.current?.click()}
               >
-                <option value="friends">👥 BẠN BÈ</option>
-                <option value="public">🌐 CÔNG KHAI</option>
-                <option value="private">🔒 CHỈ MÌNH TÔI</option>
-              </select>
-
-              <button type="submit" className="primary sm" disabled={posting || !newContent.trim()}>
-                {posting ? '[ĐANG ĐĂNG...]' : '[ ĐĂNG BÀI → ]'}
+                +
               </button>
+
+              {/* VERTICAL DIVIDER */}
+              <div className="feed-prompt-divider" />
+
+              {/* INPUT / TEXTAREA */}
+              <textarea
+                ref={textareaRef}
+                className="feed-prompt-textarea"
+                placeholder='Example : "Explain quantum computing in simple terms"'
+                rows={1}
+                value={newContent}
+                onChange={(e) => {
+                  setNewContent(e.target.value);
+                  const el = e.target;
+                  if (el.scrollHeight > el.clientHeight && el.scrollHeight <= 140) {
+                    el.style.height = `${el.scrollHeight}px`;
+                  } else if (!e.target.value) {
+                    el.style.height = '';
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleCreatePost(e);
+                  }
+                }}
+                maxLength={5000}
+              />
+
+              {/* RIGHT ACTIONS: MIC + SEND */}
+              <div className="feed-prompt-actions-right">
+                <button
+                  type="button"
+                  className={`feed-prompt-mic-btn ${isRecording ? 'active' : ''}`}
+                  title={isRecording ? 'Đang ghi âm... nhấn để dừng' : 'Nhập bằng giọng nói / Ghi âm'}
+                  onClick={handleToggleSpeech}
+                >
+                  🎙️
+                </button>
+
+                <button
+                  type="button"
+                  className="feed-prompt-send-btn"
+                  title="Đăng bài (Ctrl+Enter)"
+                  disabled={posting || uploadingAttachment || (!newContent.trim() && attachedMedia.length === 0)}
+                  onClick={handleCreatePost}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                </button>
+              </div>
             </div>
-          </form>
+
+            {/* ATTACHMENT PREVIEW CHIPS */}
+            {(attachedMedia.length > 0 || uploadingAttachment) && (
+              <div className="feed-prompt-previews">
+                {attachedMedia.map((m, idx) => (
+                  <div key={idx} className="feed-preview-chip">
+                    {m.type === 'image' ? (
+                      <img src={resolveMediaUrl(m.url)} alt={m.name} className="feed-preview-thumb" />
+                    ) : m.type === 'video' ? (
+                      <span style={{ fontSize: '18px' }}>🎬</span>
+                    ) : (
+                      <span style={{ fontSize: '18px' }}>{getFileDetails(m.name).icon}</span>
+                    )}
+                    <div className="feed-preview-info">
+                      <span className="feed-preview-name">{m.name || 'Tệp'}</span>
+                      <span className="feed-preview-size">{formatFileSize(m.size)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="feed-preview-remove"
+                      onClick={() => handleRemoveAttachment(idx)}
+                      title="Xoá đính kèm"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {uploadingAttachment && (
+                  <div className="feed-preview-uploading">
+                    <span>⏳</span> Đang tải tệp/video lên...
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* BOTTOM CAPSULE / PILL BUTTONS ROW */}
+          <div className="feed-pill-row">
+            {/* 1. Upload image */}
+            <button
+              type="button"
+              className="feed-pill-btn"
+              onClick={() => imageInputRef.current?.click()}
+              title="Tải ảnh lên bài viết"
+            >
+              <span className="feed-pill-btn-icon">🖼️</span>
+              <span>Upload image</span>
+            </button>
+
+            {/* 2. Upload file hoặc video */}
+            <button
+              type="button"
+              className="feed-pill-btn"
+              onClick={() => fileInputRef.current?.click()}
+              title="Đính kèm tệp tài liệu hoặc video (tối đa 200MB)"
+            >
+              <span className="feed-pill-btn-icon">📁</span>
+              <span>Upload file hoặc video</span>
+            </button>
+
+            {/* 3. Quyền riêng tư */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="feed-pill-btn"
+                onClick={() => setShowVisibilityMenu((v) => !v)}
+                title="Thay đổi quyền riêng tư của bài viết"
+              >
+                <span className="feed-pill-btn-icon">
+                  {newVisibility === 'public' ? '🌐' : newVisibility === 'friends' ? '👥' : '🔒'}
+                </span>
+                <span>
+                  Quyền riêng tư: {newVisibility === 'public' ? 'Công khai' : newVisibility === 'friends' ? 'Bạn bè' : 'Chỉ mình tôi'}
+                </span>
+              </button>
+
+              {showVisibilityMenu && (
+                <div className="feed-visibility-popover">
+                  <button
+                    type="button"
+                    className={`feed-visibility-item ${newVisibility === 'friends' ? 'selected' : ''}`}
+                    onClick={() => { setNewVisibility('friends'); setShowVisibilityMenu(false); }}
+                  >
+                    <span>👥</span> Bạn bè
+                  </button>
+                  <button
+                    type="button"
+                    className={`feed-visibility-item ${newVisibility === 'public' ? 'selected' : ''}`}
+                    onClick={() => { setNewVisibility('public'); setShowVisibilityMenu(false); }}
+                  >
+                    <span>🌐</span> Công khai
+                  </button>
+                  <button
+                    type="button"
+                    className={`feed-visibility-item ${newVisibility === 'private' ? 'selected' : ''}`}
+                    onClick={() => { setNewVisibility('private'); setShowVisibilityMenu(false); }}
+                  >
+                    <span>🔒</span> Chỉ mình tôi
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 4. More ... */}
+            <button
+              type="button"
+              className="feed-pill-btn feed-pill-more"
+              onClick={handleClearComposer}
+              title="Làm mới bản nháp"
+            >
+              <span>•••</span>
+            </button>
+          </div>
+
+          {/* HIDDEN FILE INPUTS */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files) handleUploadFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files) handleUploadFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
         </div>
 
         {/* POSTS LIST */}
@@ -436,7 +754,140 @@ export default function XFeedView({
                       </div>
                     </div>
                   ) : (
-                    <div className="post-content">{post.content}</div>
+                    <>
+                      {post.content && <div className="post-content">{post.content}</div>}
+
+                      {/* POST MEDIA ATTACHMENTS (Images & Files) */}
+                      {Array.isArray(post.mediaUrls) && post.mediaUrls.length > 0 && (
+                        <div className="post-media-container">
+                          {/* Images Grid */}
+                          {(() => {
+                            const images = post.mediaUrls.filter(
+                              (m) => m.type === 'image' || /\.(jpe?g|png|gif|webp|bmp|svg)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!images.length) return null;
+                            const count = images.length;
+                            const countClass =
+                              count === 1
+                                ? 'count-1'
+                                : count === 2
+                                ? 'count-2'
+                                : count === 3
+                                ? 'count-3'
+                                : count === 4
+                                ? 'count-4'
+                                : 'count-more';
+                            const displayImages = images.slice(0, 4);
+
+                            return (
+                              <div className={`post-images-grid ${countClass}`}>
+                                {displayImages.map((img, idx) => {
+                                  const isLast = idx === 3 && count > 4;
+                                  const fullUrl = resolveMediaUrl(img.url);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="post-img-cell"
+                                      onClick={() => setLightboxSrc(fullUrl)}
+                                      title="Bấm để xem ảnh phóng to"
+                                    >
+                                      <img
+                                        src={fullUrl}
+                                        alt={img.name || `Ảnh ${idx + 1}`}
+                                        className="post-img-item"
+                                        loading="lazy"
+                                      />
+                                      {isLast && (
+                                        <div className="post-img-overlay">
+                                          +{count - 3}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Videos Player */}
+                          {(() => {
+                            const videos = post.mediaUrls.filter(
+                              (m) =>
+                                m.type === 'video' ||
+                                /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!videos.length) return null;
+
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {videos.map((vid, idx) => (
+                                  <div key={idx} className="post-video-container">
+                                    <video
+                                      controls
+                                      playsInline
+                                      preload="metadata"
+                                      className="post-video-player"
+                                      src={resolveMediaUrl(vid.url)}
+                                    >
+                                      Trình duyệt không hỗ trợ xem video trực tiếp.
+                                    </video>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Files List */}
+                          {(() => {
+                            const files = post.mediaUrls.filter(
+                              (m) =>
+                                m.type !== 'image' &&
+                                m.type !== 'video' &&
+                                !/\.(jpe?g|png|gif|webp|bmp|svg|mp4|mov|webm|mkv|avi|m4v|3gp)(\?.*)?$/i.test(m.url || '')
+                            );
+                            if (!files.length) return null;
+
+                            return (
+                              <div className="post-files-list">
+                                {files.map((file, idx) => {
+                                  const details = getFileDetails(file.name);
+                                  const downloadUrl = resolveMediaUrl(file.url);
+                                  return (
+                                    <a
+                                      key={idx}
+                                      href={downloadUrl}
+                                      download={file.name || 'attachment'}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="post-file-card"
+                                      title={`Tải xuống ${file.name || 'tệp'}`}
+                                    >
+                                      <div className="post-file-left">
+                                        <div
+                                          className="post-file-icon-badge"
+                                          style={{ borderColor: details.color }}
+                                        >
+                                          <span>{details.icon}</span>
+                                        </div>
+                                        <div className="post-file-info">
+                                          <span className="post-file-name">{file.name || 'Tệp đính kèm'}</span>
+                                          <span className="post-file-size">
+                                            {details.label} {file.size ? `• ${formatFileSize(file.size)}` : ''}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <span className="post-file-download-btn">
+                                        ⬇ Tải về
+                                      </span>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* X-STYLE ACTION BAR (4 BUTTONS) */}
@@ -646,6 +1097,11 @@ export default function XFeedView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* LIGHTBOX FOR PREVIEWING POST IMAGES */}
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
       )}
     </div>
   );

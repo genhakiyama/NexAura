@@ -47,12 +47,47 @@ export default function ChatPage() {
   const [showFriends, setShowFriends] = useState(false);
   const [showFeed, setShowFeed] = useState(false);
   const [friendsList, setFriendsList] = useState([]);
+  const [pendingFriendRequestsCount, setPendingFriendRequestsCount] = useState(0);
   const [activeView, setActiveView] = useState('chat'); // 'chat' | 'feed'
   const [topSearch, setTopSearch] = useState('');
   const [topSearchResults, setTopSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [typingUsers, setTypingUsers] = useState({});
+  const searchWrapRef = useRef(null);
 
-  // Debounced search for usernames from topbar
+  // Close search dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(event.target)) {
+        setIsSearchOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const loadFriendsList = useCallback(async () => {
+    try {
+      const res = await api.getFriends();
+      setFriendsList(res?.friends || []);
+    } catch (err) {
+      console.error('Lỗi tải danh sách bạn bè:', err);
+    }
+  }, []);
+
+  const loadPendingFriendRequestsCount = useCallback(async () => {
+    try {
+      const res = await api.getFriendRequests('incoming');
+      if (res?.requests) {
+        setPendingFriendRequestsCount(res.requests.length);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Debounced search for usernames or emails from topbar
   useEffect(() => {
     const q = topSearch.trim();
     if (!q) {
@@ -63,7 +98,8 @@ export default function ChatPage() {
       setIsSearching(true);
       try {
         const res = await api.searchUsers(q);
-        setTopSearchResults(res?.users || []);
+        const usersList = Array.isArray(res) ? res : (res?.users || res?.data || []);
+        setTopSearchResults(usersList);
       } catch {}
       setIsSearching(false);
     }, 250);
@@ -76,27 +112,19 @@ export default function ChatPage() {
   // Sends whose socket echo has not been matched to the real DB id yet.
   const pendingSendsRef = useRef([]);
 
-  // Fetch pending friend requests count on mount
+  // Fetch pending friend requests count & friends list on mount
   useEffect(() => {
-    let mounted = true;
-    api.getFriendRequests('incoming')
-      .then((res) => {
-        if (mounted && res?.requests) {
-          setPendingFriendRequestsCount(res.requests.length);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    loadFriendsList();
+    loadPendingFriendRequestsCount();
+  }, [loadFriendsList, loadPendingFriendRequestsCount]);
 
   const handleStartDirectChat = async (targetUserId) => {
     try {
       const res = await api.createDirectChat(targetUserId);
       await loadChats();
-      if (res?.conversation?.id) {
-        openChat(res.conversation.id);
+      const targetConvId = res?.conversation?.id || res?.id;
+      if (targetConvId) {
+        openChat(targetConvId);
       }
     } catch (err) {
       setError(err.message || 'Không thể tạo cuộc trò chuyện.');
@@ -137,8 +165,14 @@ export default function ChatPage() {
   const openChat = useCallback(
     async (id) => {
       if (activeIdRef.current && activeIdRef.current !== id) {
+        emit('typing_stop', { conversationId: activeIdRef.current });
         emit('leave_room', activeIdRef.current);
       }
+      // Reset typing users on chat switch
+      setTypingUsers((prev) => {
+        Object.values(prev).forEach((u) => clearTimeout(u.timerId));
+        return {};
+      });
       // Echoes for other chats are ignored while inactive; let their next
       // history load supply the real ids instead of matching them later.
       pendingSendsRef.current = pendingSendsRef.current.filter(
@@ -164,6 +198,26 @@ export default function ChatPage() {
     },
     [emit]
   );
+
+  // Filter typing users for the currently active chat (excluding current user)
+  const activeTypingList = useMemo(() => {
+    if (!activeId) return [];
+    return Object.values(typingUsers).filter(
+      (u) => sameId(u.conversationId, activeId)
+    );
+  }, [activeId, typingUsers]);
+
+  const handleTypingStart = useCallback(() => {
+    if (activeIdRef.current) {
+      emit('typing_start', { conversationId: activeIdRef.current });
+    }
+  }, [emit]);
+
+  const handleTypingStop = useCallback(() => {
+    if (activeIdRef.current) {
+      emit('typing_stop', { conversationId: activeIdRef.current });
+    }
+  }, [emit]);
 
   // ---- Polling sync ----
   // Vercel Functions cannot keep one Socket.IO room across instances (and a
@@ -236,6 +290,20 @@ export default function ChatPage() {
   useEffect(() => {
     const handleNewMessage = (data) => {
       if (!data || !sameId(data.chatId, activeIdRef.current)) return;
+
+      // Clear typing indicator for this sender immediately upon receiving their message
+      setTypingUsers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (next[key].username === data.from) {
+            clearTimeout(next[key].timerId);
+            delete next[key];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
 
       // The broadcast carries no message id, so match it against our pending
       // HTTP send to recover the real DB id. Without it the row keeps a
@@ -339,6 +407,59 @@ export default function ChatPage() {
       }
     };
 
+    const handleFriendRequest = () => {
+      loadPendingFriendRequestsCount();
+    };
+
+    const handleFriendAccepted = () => {
+      loadFriendsList();
+      loadPendingFriendRequestsCount();
+    };
+
+    const handleUserTyping = (data) => {
+      if (!data || !sameId(data.conversationId, activeIdRef.current)) return;
+      if (
+        data.username === user?.username ||
+        (data.rawUserId && data.rawUserId === user?.userId)
+      ) {
+        return;
+      }
+
+      const userKey = data.rawUserId || data.userId || data.username;
+      if (!userKey) return;
+
+      setTypingUsers((prev) => {
+        const next = { ...prev };
+        if (!data.isTyping) {
+          if (next[userKey]) {
+            clearTimeout(next[userKey].timerId);
+            delete next[userKey];
+          }
+          return next;
+        }
+
+        if (next[userKey]?.timerId) {
+          clearTimeout(next[userKey].timerId);
+        }
+
+        // Safety fallback: auto-clear typing after 4 seconds of inactivity
+        const timerId = setTimeout(() => {
+          setTypingUsers((curr) => {
+            const cleaned = { ...curr };
+            delete cleaned[userKey];
+            return cleaned;
+          });
+        }, 4000);
+
+        next[userKey] = {
+          conversationId: data.conversationId,
+          username: data.username,
+          timerId,
+        };
+        return next;
+      });
+    };
+
     on('send_message', handleNewMessage);
     on('new_notification', handleNotification);
     on('message_deleted', handleDeleted);
@@ -347,6 +468,9 @@ export default function ChatPage() {
     on('join_rejected', handleJoinRejected);
     on('chat_deleted', handleChatDeleted);
     on('user_left', handleUserLeft);
+    on('new_friend_request', handleFriendRequest);
+    on('friend_request_accepted', handleFriendAccepted);
+    on('user_typing', handleUserTyping);
     return () => {
       off('send_message', handleNewMessage);
       off('new_notification', handleNotification);
@@ -356,8 +480,11 @@ export default function ChatPage() {
       off('join_rejected', handleJoinRejected);
       off('chat_deleted', handleChatDeleted);
       off('user_left', handleUserLeft);
+      off('new_friend_request', handleFriendRequest);
+      off('friend_request_accepted', handleFriendAccepted);
+      off('user_typing', handleUserTyping);
     };
-  }, [on, off, loadChats, openChat, user]);
+  }, [on, off, loadChats, openChat, user, loadFriendsList, loadPendingFriendRequestsCount]);
 
   // ---- Send message over HTTP; server broadcasts to the socket room ----
   const handleSend = async (content) => {
@@ -428,6 +555,43 @@ export default function ChatPage() {
               from: user?.username,
               message: imageUrl,
               type: 'image',
+              senderId: user?.userId,
+              createdAt: new Date().toISOString(),
+            },
+            user?.username
+          ).list
+        );
+      }
+    } catch (err) {
+      setError(err.message);
+      throw err; // let Composer know so it keeps the preview
+    }
+  };
+
+  // ---- Upload general file over HTTP ----
+  const handleFileUpload = async (file) => {
+    if (!activeId) return;
+    try {
+      const payload = await api.uploadFile({ conversationId: activeId, file });
+      const messageId = Number(payload?.messageId);
+      const fileUrl = payload?.fileUrl;
+
+      if (messageId && fileUrl) {
+        const fileContent = JSON.stringify({
+          url: fileUrl,
+          name: payload?.fileName || file.name,
+          size: payload?.fileSize || file.size,
+          mimetype: file.type,
+        });
+
+        setMessages((prev) =>
+          upsertIncoming(
+            prev,
+            {
+              id: messageId,
+              from: user?.username,
+              message: fileContent,
+              type: 'file',
               senderId: user?.userId,
               createdAt: new Date().toISOString(),
             },
@@ -529,7 +693,7 @@ export default function ChatPage() {
   const online = connected || syncOk;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${(activeId || activeView === 'feed') ? 'mobile-chat-active' : ''}`}>
       <Sidebar
         conversations={conversations}
         activeId={activeId}
@@ -555,39 +719,80 @@ export default function ChatPage() {
       <main className="chat-area">
         {/* TOPBAR WITH BRAND/TITLE, INSTANT USERNAME SEARCH, AND CONTROLS */}
         <div className="chat-header">
+          {/* MOBILE BACK BUTTON (Visible only on mobile screens) */}
+          <button
+            type="button"
+            className="mobile-back-btn"
+            onClick={() => {
+              setActiveId(null);
+              setActiveView('chat');
+            }}
+            title="Quay lại danh sách chat"
+            aria-label="Quay lại"
+          >
+            ←
+          </button>
+
           <div className="chat-header-title">
             {activeView === 'feed' ? (
               <span>📰 BẢNG TIN // X-FEED</span>
             ) : (
-              <span>
-                {activeId
-                  ? conversations.find((c) => c.id === activeId)?.name || `Chat #${activeId}`
-                  : 'NEXORA // MESSENGER'}
-              </span>
+              <div className="chat-header-info">
+                <span className="chat-title-text">
+                  {activeId
+                    ? conversations.find((c) => c.id === activeId)?.name || `Chat #${activeId}`
+                    : 'NEXORA // MESSENGER'}
+                </span>
+                {activeTypingList.length > 0 && (
+                  <span className="chat-header-typing-status" title="Đang soạn tin...">
+                    <span className="chat-typing-dots">
+                      <span className="mini-dot" />
+                      <span className="mini-dot" />
+                      <span className="mini-dot" />
+                    </span>
+                    <span className="chat-typing-names">
+                      {activeTypingList.map((u) => u.username).join(', ')} đang gõ...
+                    </span>
+                  </span>
+                )}
+              </div>
             )}
           </div>
 
-          {/* INSTANT TOPBAR SEARCH BY USERNAME */}
-          <div className="topbar-search-wrap">
+          {/* INSTANT TOPBAR SEARCH BY USERNAME OR EMAIL */}
+          <div className="topbar-search-wrap" ref={searchWrapRef}>
             <input
               type="text"
               className="topbar-search-input"
-              placeholder="🔍 Tìm username (@...)"
+              placeholder="🔍 Tìm username (@...) hoặc email..."
               value={topSearch}
-              onChange={(e) => setTopSearch(e.target.value)}
+              onFocus={() => setIsSearchOpen(true)}
+              onChange={(e) => {
+                setTopSearch(e.target.value);
+                setIsSearchOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setIsSearchOpen(false);
+                  setTopSearch('');
+                }
+              }}
             />
             {topSearch && (
               <button
                 className="search-clear-btn"
-                onClick={() => setTopSearch('')}
+                onClick={() => {
+                  setTopSearch('');
+                  setIsSearchOpen(false);
+                }}
                 title="Xoá tìm kiếm"
               >
                 ✕
               </button>
             )}
 
-            {/* LIVE USERNAME SEARCH DROPDOWN */}
-            {topSearch.trim() && (
+            {/* LIVE USERNAME & EMAIL SEARCH DROPDOWN */}
+            {isSearchOpen && topSearch.trim() && (
               <ul className="topbar-search-results">
                 {isSearching && (
                   <li className="muted" style={{ padding: '8px 12px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
@@ -596,7 +801,7 @@ export default function ChatPage() {
                 )}
                 {!isSearching && topSearchResults.length === 0 && (
                   <li className="muted" style={{ padding: '8px 12px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
-                    // Không tìm thấy username "{topSearch}"
+                    // Không tìm thấy người dùng phù hợp
                   </li>
                 )}
                 {!isSearching &&
@@ -624,6 +829,7 @@ export default function ChatPage() {
                               onClick={() => {
                                 handleStartDirectChat(u.id);
                                 setTopSearch('');
+                                setIsSearchOpen(false);
                                 setActiveView('chat');
                               }}
                               title="Nhắn tin trực tiếp 1-1"
@@ -638,9 +844,21 @@ export default function ChatPage() {
                             <button
                               className="primary sm"
                               onClick={async () => {
-                                await api.respondFriendRequest(u.requestId, 'accept');
-                                setTopSearch('');
-                                loadChats();
+                                try {
+                                  await api.respondFriendRequest(u.requestId, 'accept');
+                                  setTopSearchResults((prev) =>
+                                    prev.map((item) =>
+                                      item.id === u.id
+                                        ? { ...item, relationshipStatus: 'friends' }
+                                        : item
+                                    )
+                                  );
+                                  loadChats();
+                                  loadFriendsList();
+                                  loadPendingFriendRequestsCount();
+                                } catch (err) {
+                                  alert(err.message || 'Lỗi đồng ý lời mời kết bạn.');
+                                }
                               }}
                             >
                               Đồng ý
@@ -650,9 +868,18 @@ export default function ChatPage() {
                             <button
                               className="ghost sm"
                               onClick={async () => {
-                                await api.sendFriendRequest(u.id);
-                                setTopSearch('');
-                                alert('Đã gửi lời mời kết bạn!');
+                                try {
+                                  const res = await api.sendFriendRequest(u.id);
+                                  setTopSearchResults((prev) =>
+                                    prev.map((item) =>
+                                      item.id === u.id
+                                        ? { ...item, relationshipStatus: 'pending_sent', requestId: res?.requestId }
+                                        : item
+                                    )
+                                  );
+                                } catch (err) {
+                                  alert(err.message || 'Lỗi gửi lời mời kết bạn.');
+                                }
                               }}
                             >
                               + Kết bạn
@@ -756,11 +983,15 @@ export default function ChatPage() {
                 messages={messagesWithDelete}
                 currentUserId={user?.userId}
                 currentUsername={user?.username}
+                typingUsers={activeTypingList}
               />
               <Composer
                 disabled={!activeId || activeConversation?.status === 'pending'}
                 onSend={handleSend}
                 onImageUpload={handleImageUpload}
+                onFileUpload={handleFileUpload}
+                onTypingStart={handleTypingStart}
+                onTypingStop={handleTypingStop}
               />
             </div>
           )}
