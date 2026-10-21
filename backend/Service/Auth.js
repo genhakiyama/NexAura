@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const authErr = require('../Errors/Authen');
 
 const EmailService = require('./Email');
+const { VERIFY_TTL_MINUTES } = EmailService;
 const Token = require('../UTIL/Token');
 const { validateEmailAuthenticity } = require('../UTIL/EmailDetector');
 
@@ -44,7 +45,7 @@ async function SignUp(email , username , password) {
         if (existingUser) {
             const isExpired = !existingUser.isVerified && (
                 (existingUser.verificationExpire && new Date(existingUser.verificationExpire) <= new Date()) ||
-                (existingUser.createdAt && new Date(existingUser.createdAt) <= new Date(Date.now() - 15 * 60 * 1000))
+                (existingUser.createdAt && new Date(existingUser.createdAt) <= new Date(Date.now() - VERIFY_TTL_MINUTES * 60 * 1000))
             );
             if (isExpired) {
                 await existingUser.destroy();
@@ -71,7 +72,7 @@ async function SignUp(email , username , password) {
         if (existingEmail) {
             const isExpired = !existingEmail.isVerified && (
                 (existingEmail.verificationExpire && new Date(existingEmail.verificationExpire) <= new Date()) ||
-                (existingEmail.createdAt && new Date(existingEmail.createdAt) <= new Date(Date.now() - 15 * 60 * 1000))
+                (existingEmail.createdAt && new Date(existingEmail.createdAt) <= new Date(Date.now() - VERIFY_TTL_MINUTES * 60 * 1000))
             );
             if (isExpired) {
                 await existingEmail.destroy();
@@ -89,30 +90,38 @@ async function SignUp(email , username , password) {
             }
         }
 
-        // 5. Chuẩn bị token xác thực + mã OTP 6 số và gửi email xác thực qua Gmail
+        // 5. Chuẩn bị token xác thực + mã OTP 6 số
         const {token , hashedToken} = Token.TokenGeneration();
         const {otp , hashedOtp} = Token.OtpGeneration();
-        const mailResult = await EmailService.SendVerification(cleanEmail , token, otp);
-        if (!mailResult || !mailResult.success) {
-            return {
-                status_code : 400 ,
-                error : mailResult?.error || 'Gmail không thể gửi thư tới địa chỉ này. Email có thể không tồn tại.'
-            };
-        }
-
-        // 6. Sau khi Gmail gửi tin thành công, lưu tài khoản vào cơ sở dữ liệu (thời hạn 15 phút, single-use)
         const hashedpassword = await brcrypt.hash(password , 12);
-        await User.create({
+
+        // 6. Tạo tài khoản TRƯỚC khi gửi mail xác thực.
+        //    Thứ tự này là bắt buộc: nếu gửi mail trước mà ghi DB sau thì khi
+        //    ghi DB thất bại (ví dụ cột verificationOtp bị giới hạn độ dài),
+        //    người dùng vẫn nhận được email kích hoạt nhưng tài khoản không tồn
+        //    tại -> bấm link báo "không tồn tại" và cũng không gửi lại mã được.
+        const newUser = await User.create({
             email : cleanEmail ,
             username : cleanUsername ,
             password : hashedpassword , 
             isVerified : false , 
             verificationToken : hashedToken,
             verificationOtp : hashedOtp,
-            verificationExpire : new Date(Date.now() + 15 * 60 * 1000),
+            verificationExpire : new Date(Date.now() + VERIFY_TTL_MINUTES * 60 * 1000),
             resendCount : 0,
             lastResendAt : new Date()
         });
+
+        // 7. Gửi email xác thực qua Gmail. Nếu gửi lỗi thì xoá tài khoản vừa
+        //    tạo, tránh để lại tài khoản "mồ côi" không có cách nào kích hoạt.
+        const mailResult = await EmailService.SendVerification(cleanEmail , token, otp);
+        if (!mailResult || !mailResult.success) {
+            await newUser.destroy();
+            return {
+                status_code : 400 ,
+                error : mailResult?.error || 'Gmail không thể gửi thư tới địa chỉ này. Email có thể không tồn tại.'
+            };
+        }
 
         return {
             message : 'Đăng ký thành công! Vui lòng kiểm tra email để lấy mã OTP hoặc bấm liên kết xác thực.',

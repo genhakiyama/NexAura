@@ -28,6 +28,12 @@ transporter.on('error', (err) => {
     console.error('[mail transport error]', err.message);
 });
 
+/**
+ * Thời hạn hiệu lực của link kích hoạt và mã OTP (đơn vị: phút).
+ * Dùng chung cho cả đăng ký lẫn gửi lại mã để hai luồng không lệch nhau.
+ */
+const VERIFY_TTL_MINUTES = Math.max(1, Number(process.env.VERIFY_EXPIRE_MINUTES) || 15);
+
 function resolveBaseUrl() {
     const configured = String(process.env.BASE_URL || '').trim().replace(/\/+$/, '');
     const renderUrl = String(process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/+$/, '');
@@ -74,7 +80,12 @@ function resolveClientUrl() {
         process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || ''
     ).trim().replace(/\/+$/, '');
     if (vercelHost) {
-        return /^https?:\/\//i.test(vercelHost) ? `https://${vercelHost}` : vercelHost;
+        // Vercel cấp host KHÔNG kèm scheme ("app.vercel.app"), nên phải tự thêm
+        // "https://". Trước đây điều kiện ở đây bị đảo ngược: host có scheme thì
+        // bị gộp thành "https://https://...", host không có scheme thì trả về
+        // chuỗi trần. Kết quả là href trên trang kích hoạt trở thành đường dẫn
+        // tương đối và người dùng không đến được trang đăng nhập.
+        return /^https?:\/\//i.test(vercelHost) ? vercelHost : `https://${vercelHost}`;
     }
 
     // In local development, frontend Vite default is on port 5173
@@ -173,7 +184,7 @@ async function verifyEmail(token) {
     if (!user) {
         return {
             status_code: 400,
-            error: 'Liên kết xác thực không tồn tại hoặc tài khoản đã được kích hoạt trước đó.'
+            error: 'Liên kết xác thực không tồn tại hoặc tài khoản đã được kích hoạt trước đó. Vui lòng yêu cầu gửi lại mã xác minh mới.'
         };
     }
 
@@ -339,23 +350,36 @@ async function resendVerification(email) {
     const { token, hashedToken } = Token.TokenGeneration();
     const { otp, hashedOtp } = Token.OtpGeneration();
 
-    // 5. Gửi thư xác thực
+    // 5. Lưu token/OTP mới vào DB TRƯỚC khi gửi mail.
+    //    Gửi mail trước rồi mới lưu DB tạo ra một khoảng thời gian mà link trong
+    //    email không khớp với token đang lưu -> người dùng bấm link bị báo
+    //    "không tồn tại". Lưu trước rồi gửi sau là thứ tự an toàn.
+    const previous = {
+        verificationToken: user.verificationToken,
+        verificationOtp: user.verificationOtp,
+        verificationExpire: user.verificationExpire,
+        resendCount: user.resendCount,
+        lastResendAt: user.lastResendAt
+    };
+    await user.update({
+        verificationToken: hashedToken,
+        verificationOtp: hashedOtp,
+        verificationExpire: new Date(Date.now() + VERIFY_TTL_MINUTES * 60 * 1000),
+        resendCount: currentAttempts,
+        lastResendAt: new Date()
+    });
+
+    // 6. Gửi thư xác thực
     const mailResult = await SendVerification(cleanEmail, token, otp);
     if (!mailResult || !mailResult.success) {
+        // Hoàn tác thay đổi để mã cũ (nếu còn hiệu lực) vẫn dùng được và
+        // không bị trừ 1 lượt gửi lại mà thực tế không nhận được email.
+        await user.update(previous);
         return {
             status_code: 400,
             error: mailResult?.error || 'Không thể gửi email xác thực lúc này. Vui lòng kiểm tra lại email.'
         };
     }
-
-    // 6. Cập nhật thông tin vào DB (thời hạn 15 phút, tăng số lần gửi)
-    await user.update({
-        verificationToken: hashedToken,
-        verificationOtp: hashedOtp,
-        verificationExpire: new Date(Date.now() + 15 * 60 * 1000),
-        resendCount: currentAttempts,
-        lastResendAt: new Date()
-    });
 
     const remainingSends = 5 - currentAttempts;
 
@@ -375,5 +399,6 @@ module.exports = {
     resolveBaseUrl,
     resolveBaseURL,
     resolveClientUrl,
-    resolveClientURL
+    resolveClientURL,
+    VERIFY_TTL_MINUTES
 };

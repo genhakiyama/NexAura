@@ -4,33 +4,34 @@ const User = require('../Models/User');
 const { initDatabase } = require('../DBInit');
 
 /**
- * Quét và xoá các tài khoản chưa xác thực hoặc bị lỗi quá 15 phút:
- * 1. isVerified = false VÀ verificationExpire <= thời điểm hiện tại (đã quá 15 phút)
- * 2. isVerified = false VÀ createdAt <= 15 phút trước (trường hợp token bị lỗi hoặc không có expire)
+ * Sau bao lâu thì tài khoản chưa xác thực bị xoá (đơn vị: giờ).
+ *
+ * Hạn xác thực (VERIFY_EXPIRE_MINUTES) chỉ quyết định link / mã OTP còn dùng
+ * được hay không. Việc XOÁ tài khoản phải chậm hơn nhiều: nếu xoá đúng lúc hết
+ * hạn thì người dùng mở email muộn sẽ không tìm thấy tài khoản, bấm link báo
+ * "không tồn tại" và cũng không gửi lại mã xác minh được -> kẹt vĩnh viễn ở
+ * màn hình lỗi. Giữ tài khoản thêm thời gian để họ gửi lại mã và kích hoạt.
+ */
+const CLEANUP_AFTER_HOURS = Math.max(1, Number(process.env.VERIFY_CLEANUP_AFTER_HOURS) || 24);
+
+/**
+ * Quét và xoá các tài khoản chưa xác thực quá hạn:
+ * 1. isVerified = false VÀ createdAt <= thời điểm cutoff (mặc định 24 giờ trước)
+ * 2. Tài khoản đã quá hạn xác thực nhưng vẫn được giữ lại để người dùng có thể
+ *    yêu cầu gửi lại mã OTP.
  */
 async function cleanExpiredUnverifiedUsers() {
     try {
         await initDatabase();
-        const now = new Date();
-        const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+        const cleanupCutoff = new Date(Date.now() - CLEANUP_AFTER_HOURS * 60 * 60 * 1000);
 
         // Tìm danh sách tài khoản quá hạn để ghi log chi tiết
         const expiredUsers = await User.findAll({
             where: {
                 isVerified: false,
-                [Op.or]: [
-                    {
-                        verificationExpire: {
-                            [Op.ne]: null,
-                            [Op.lte]: now
-                        }
-                    },
-                    {
-                        createdAt: {
-                            [Op.lte]: fifteenMinutesAgo
-                        }
-                    }
-                ]
+                createdAt: {
+                    [Op.lte]: cleanupCutoff
+                }
             },
             attributes: ['id', 'email', 'username', 'createdAt', 'verificationExpire']
         });
@@ -41,7 +42,7 @@ async function cleanExpiredUnverifiedUsers() {
 
         const idsToDelete = expiredUsers.map(u => u.id);
 
-        console.log(`[UserCleanupCron] Phát hiện ${expiredUsers.length} tài khoản chưa xác thực quá 15 phút cần xoá:`, 
+        console.log(`[UserCleanupCron] Phát hiện ${expiredUsers.length} tài khoản chưa xác thực quá ${CLEANUP_AFTER_HOURS} giờ cần xoá:`,
             expiredUsers.map(u => `${u.username} (${u.email})`).join(', ')
         );
 
