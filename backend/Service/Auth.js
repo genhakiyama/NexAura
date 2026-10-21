@@ -49,6 +49,12 @@ async function SignUp(email , username , password) {
             if (isExpired) {
                 await existingUser.destroy();
             } else {
+                if (!existingUser.isVerified) {
+                    return {
+                        status_code : 400,
+                        error : 'Tài khoản này đã đăng ký nhưng chưa xác thực. Vui lòng đăng nhập để nhập mã OTP hoặc gửi lại mã xác minh.'
+                    };
+                }
                 return {
                     status_code : authErr.UserAlreadyExistsError.defaultStatusCode , 
                     error : authErr.UserAlreadyExistsError.defaultMessage
@@ -70,6 +76,12 @@ async function SignUp(email , username , password) {
             if (isExpired) {
                 await existingEmail.destroy();
             } else {
+                if (!existingEmail.isVerified) {
+                    return {
+                        status_code : 400,
+                        error : 'Địa chỉ email này đã đăng ký nhưng chưa kích hoạt. Vui lòng đăng nhập để nhập mã OTP hoặc gửi lại mã xác minh.'
+                    };
+                }
                 return {
                     status_code : 409 ,
                     error : 'Địa chỉ email này đã được sử dụng cho một tài khoản khác.'

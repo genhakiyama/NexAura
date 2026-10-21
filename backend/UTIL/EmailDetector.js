@@ -191,6 +191,12 @@ async function hasValidMxRecords(domain) {
  * để kiểm tra xem tài khoản Gmail có thực sự tồn tại hay không.
  */
 function verifyGmailAddress(email, senderUser = 'sandundertailroal@gmail.com', timeoutMs = 4500) {
+  // Trên Vercel / AWS Lambda / Render, cổng 25 bị tường lửa chặn mặc định.
+  // Tránh việc treo socket 4.5 giây gây chậm quá trình đăng ký.
+  if (process.env.VERCEL || process.env.AWS_REGION || process.env.RENDER) {
+    return Promise.resolve({ exists: null, fallback: true });
+  }
+
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result) => {

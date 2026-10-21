@@ -339,6 +339,38 @@ async function ResendVerification(req , res) {
     }
 }
 
+const { cleanExpiredUnverifiedUsers } = require('../Cron/UserCleanup');
+
+/**
+ * Endpoint kích hoạt dọn dẹp tài khoản quá hạn (cho Vercel Cron hoặc External Cron)
+ */
+async function TriggerUserCleanup(req, res) {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+        const authHeader = req.headers.authorization;
+        if (authHeader !== `Bearer ${cronSecret}`) {
+            return res.status(401).json({
+                success: false,
+                payload: { error: 'Unauthorized: CRON_SECRET mismatch' }
+            });
+        }
+    }
+
+    try {
+        const result = await cleanExpiredUnverifiedUsers();
+        return res.status(result.success ? 200 : 500).json({
+            success: result.success,
+            payload: result
+        });
+    } catch (err) {
+        console.error('[TriggerUserCleanup error]', err);
+        return res.status(500).json({
+            success: false,
+            payload: { error: err.message }
+        });
+    }
+}
+
 module.exports = {
     Signup , 
     LogIn ,
@@ -347,5 +379,6 @@ module.exports = {
     GetWsTicket ,
     VerifyEmail,
     VerifyOtp,
-    ResendVerification
+    ResendVerification,
+    TriggerUserCleanup
 };

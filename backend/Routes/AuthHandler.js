@@ -12,6 +12,7 @@ router.post('/resend-verification' , authRateLimiter , Auth.ResendVerification);
 router.post('/refresh' , Auth.RefreshAccessToken);
 router.post('/logout' , Auth.LogOut);
 router.post('/ws/ticket' , isAuth , Auth.GetWsTicket);
-router.get('/verify-Email' , Auth.VerifyEmail);
+router.get(['/verify-Email', '/verify-email'] , Auth.VerifyEmail);
+router.all('/cron/cleanup', Auth.TriggerUserCleanup);
 
 module.exports = router;

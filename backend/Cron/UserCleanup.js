@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { Op } = require('sequelize');
 const User = require('../Models/User');
+const { initDatabase } = require('../DBInit');
 
 /**
  * Quét và xoá các tài khoản chưa xác thực hoặc bị lỗi quá 15 phút:
@@ -9,6 +10,7 @@ const User = require('../Models/User');
  */
 async function cleanExpiredUnverifiedUsers() {
     try {
+        await initDatabase();
         const now = new Date();
         const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
 
